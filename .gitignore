@@ -2,8 +2,8 @@
 src/**/_version.py
 
 
-src/odejet/__pycache__/
-src/odejet.egg-info/
+src/fixedpointsmoother/__pycache__/
+src/fixedpointsmoother.egg-info/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
