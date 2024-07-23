@@ -6,11 +6,29 @@ import jax
 from typing import Callable
 
 
+def filter_kalman(data, init, model, ssm):
+    def carry(state, inputs):
+        # Read
+        (y_k, (model_prior, model_obs)) = inputs
+        x_k = state
+
+        # Predict
+        x_kplus = ssm.marginal(x_k, model_prior)
+
+        # Update
+        x_new = ssm.condition(x_kplus, model_obs, y_k)
+        return x_new, x_new
+
+    return jax.lax.scan(carry, xs=(data, model), init=init)
+
+
 @dataclasses.dataclass
 class SSM:
     init_rv: Callable
     sample: Callable
-    conditional: Callable
+    conditional: Callable  # todo: rename to parametrize_conditional
+    marginal: Callable
+    condition: Callable
 
 
 def ssm_conventional():
@@ -23,7 +41,25 @@ def ssm_conventional():
         A, (mean, cov) = model
         return A @ x + mean, cov
 
-    return SSM(init_rv=lambda *a: a, sample=sample_, conditional=conditional)
+    def marginal(rv, /, model):
+        A, (mean, cov) = model
+        return (A @ rv[0] + mean, A @ rv[1] @ A.T + cov)
+
+    def condition(rv, model, data):
+        H, (r, R) = model
+        mean, cov = rv
+        gain = cov @ H.T @ jnp.linalg.inv(H @ cov @ H.T + R)
+        mean_new = mean - gain @ (H @ mean + r - data)
+        cov_new = cov - gain @ (H @ cov @ H.T + R) @ gain.T
+        return mean_new, cov_new
+
+    return SSM(
+        init_rv=lambda *a: a,
+        sample=sample_,
+        conditional=conditional,
+        marginal=marginal,
+        condition=condition,
+    )
 
 
 def ssm_square_root():
@@ -37,7 +73,7 @@ def ssm_square_root():
 
     def conditional_(x, /, model):
         A, (mean, cholesky) = model
-        return (A @ x + mean, cholesky)
+        return A @ x + mean, cholesky
 
     return SSM(init_rv=init_rv, sample=sample_, conditional=conditional_)
 
@@ -50,13 +86,14 @@ def model_car_tracking_velocity(ts, /, noise, diffusion, *, ssm):
         A_1d = jnp.asarray([[1.0, dt], [0, 1.0]])
         q_1d = jnp.asarray([0.0, 0.0])
         Q_1d = diffusion**2 * jnp.asarray([[dt**3 / 3, dt**2 / 2], [dt**2 / 2, dt]])
-        H_1d = jnp.asarray([1.0, 0.0])
+        H_1d = jnp.asarray([[1.0, 0.0]])
         r_1d = jnp.asarray(0.0)
         R_1d = noise**2 * jnp.asarray(1.0)
 
         A = jnp.kron(A_1d, eye_d)
         q = jnp.kron(q_1d, one_d)
         Q = jnp.kron(Q_1d, eye_d)
+
         H = jnp.kron(H_1d, eye_d)
         r = jnp.kron(r_1d, one_d)
         R = jnp.kron(R_1d, eye_d)
@@ -72,7 +109,7 @@ def model_car_tracking_velocity(ts, /, noise, diffusion, *, ssm):
     return x0, jax.vmap(transition)(jnp.diff(ts))
 
 
-def sample(key, init, model, *, ssm):
+def sample(key, x0, model, *, ssm):
     def scan_fun(x, model_k):
         key_k, sample_k = x
         model_prior, model_obs = model_k
@@ -86,6 +123,4 @@ def sample(key, init, model, *, ssm):
         sample_obs_k = ssm.sample(subkey_k, rv_obs)
         return (key_k, sample_k), (sample_k, sample_obs_k)
 
-    key, subkey = jax.random.split(key, num=2)
-    x0 = ssm.sample(subkey, init)
     return jax.lax.scan(scan_fun, xs=model, init=(key, x0))

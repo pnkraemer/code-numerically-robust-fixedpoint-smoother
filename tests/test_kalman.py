@@ -6,15 +6,9 @@ import jax
 
 from fixedpointsmoother import statespace
 
-import matplotlib.pyplot as plt
-
 
 def case_ssm_conventional():
     return statespace.ssm_conventional()
-
-
-# def case_ssm_square_root():
-#     return ssm.ssm_square_root()
 
 
 @pytest_cases.parametrize_with_cases("ssm", cases=".")
@@ -27,8 +21,15 @@ def test_trajectory_estimated(ssm):
 
     key = jax.random.PRNGKey(seed=1)
 
-    _, (_, observations) = statespace.sample(key, init, model, ssm=ssm)
-    plt.plot(observations[:, 0], observations[:, 1], "o-")
-    plt.show()
+    key, subkey = jax.random.split(key, num=2)
+    x0 = ssm.sample(subkey, init)
+
+    _, (latent, observations) = statespace.sample(key, x0, model, ssm=ssm)
+    assert latent.shape == (len(ts) - 1, 4)
+    assert observations.shape == (len(ts) - 1, 2)
+
+    _, (mean, _cov) = statespace.filter_kalman(observations, init, model, ssm=ssm)
+    print(jax.tree_util.tree_map(jnp.shape, (mean, _cov)))
+    print(mean - latent)
 
     assert False
