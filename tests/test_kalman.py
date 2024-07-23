@@ -1,32 +1,33 @@
 """Test the Kalman filter implementation."""
 
-from fixedpointsmoother import ssm
 import pytest_cases
 import jax.numpy as jnp
 import jax
 
+from fixedpointsmoother import statespace
+
 import matplotlib.pyplot as plt
 
 
-def case_param_conventional():
-    return ssm.param_conventional()
+def case_ssm_conventional():
+    return statespace.ssm_conventional()
 
 
-# def case_param_square_root():
-#     return ssm.param_square_root()
+# def case_ssm_square_root():
+#     return ssm.ssm_square_root()
 
 
-@pytest_cases.parametrize_with_cases("param", cases=".")
-def test_trajectory_estimated(param):
+@pytest_cases.parametrize_with_cases("ssm", cases=".")
+def test_trajectory_estimated(ssm):
     ts = jnp.linspace(0, 1)
 
-    init, model = ssm.model_car_tracking_velocity(
-        ts, noise=1e-2, diffusion=1.0, param=param
+    init, model = statespace.model_car_tracking_velocity(
+        ts, noise=1e-2, diffusion=1.0, ssm=ssm
     )
 
     key = jax.random.PRNGKey(seed=1)
 
-    _, (_, observations) = ssm.sample(key, init, model, param=param)
+    _, (_, observations) = statespace.sample(key, init, model, ssm=ssm)
     plt.plot(observations[:, 0], observations[:, 1], "o-")
     plt.show()
 
