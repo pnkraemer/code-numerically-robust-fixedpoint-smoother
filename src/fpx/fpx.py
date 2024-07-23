@@ -8,11 +8,13 @@ from typing import Callable
 
 @dataclasses.dataclass
 class SSM:
+    """State space model."""
+
     init_rv: Callable
     sample: Callable
-    conditional: Callable  # todo: rename to parametrize_conditional
+    parametrize_conditional: Callable
     marginal: Callable
-    condition: Callable
+    bayes_update: Callable
 
 
 def ssm_conventional():
@@ -40,9 +42,9 @@ def ssm_conventional():
     return SSM(
         init_rv=lambda *a: a,
         sample=sample_,
-        conditional=conditional,
+        parametrize_conditional=conditional,
         marginal=marginal,
-        condition=condition,
+        bayes_update=condition,
     )
 
 
@@ -99,11 +101,11 @@ def sample(key: jax.random.PRNGKey, x0: jax.Array, model, *, ssm: SSM):
         model_prior, model_obs = model_k
 
         key_k, subkey_k = jax.random.split(key_k, num=2)
-        rv = ssm.conditional(sample_k, model_prior)
+        rv = ssm.parametrize_conditional(sample_k, model_prior)
         sample_k = ssm.sample(subkey_k, rv)
 
         key_k, subkey_k = jax.random.split(key_k, num=2)
-        rv_obs = ssm.conditional(sample_k, model_obs)
+        rv_obs = ssm.parametrize_conditional(sample_k, model_obs)
         sample_obs_k = ssm.sample(subkey_k, rv_obs)
         return (key_k, sample_k), (sample_k, sample_obs_k)
 
@@ -123,7 +125,7 @@ def alg_filter_kalman(ssm: SSM) -> Algorithm:
         init=lambda x: x,
         extract=lambda x: x,
         predict=ssm.marginal,
-        update=ssm.condition,
+        update=ssm.bayes_update,
     )
 
 
