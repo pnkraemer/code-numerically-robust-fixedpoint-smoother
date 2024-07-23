@@ -6,9 +6,10 @@ But if you want to work with this repository, proceed as follows.
 
 ## Installation
 
-We use Python 3.12 for all experiments.
+We use Python 3.10 for all experiments.
 Older versions might also work.
-Ensure that JAX is installed.
+
+First, ensure that JAX is installed.
 Then, run
 ```commandline
 pip install .

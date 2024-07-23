@@ -3,21 +3,16 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "odecheckpts"
+name = "fixedpointsmoother"
 version = "0.0.1"
 dependencies = [
     # Ensure that JAX is installed.
-    "probdiffeq",   # our code
-    "diffeqzoo",    # ODE examples
     "pytest",       # testing
     "pytest_cases", # testing
     "pre-commit",   # some basic CI
     "matplotlib",   # plot
-    "tqdm",         # progressbar
-    "diffrax",      # competition
     "tueplots",     # plotting utilities
     "PyQt5",        # to resolve "FigureCanvas is not interactive"
-    "optax",        # Optimisation
 ]
 
 [tool.pytest.ini_options]
