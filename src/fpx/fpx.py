@@ -1,4 +1,4 @@
-"""State-space models and their parametrisations."""
+"""FPX: Fixed-point smoothing in JAX."""
 
 import dataclasses
 import jax.numpy as jnp
@@ -8,30 +8,31 @@ from typing import Callable
 
 @dataclasses.dataclass
 class SSM:
-    """State space model."""
-
     init_rv: Callable
     sample: Callable
     parametrize_conditional: Callable
-    marginal: Callable
+    marginalize: Callable
     bayes_update: Callable
 
 
-def ssm_conventional():
-    def sample_(key, rv):
+def ssm_conventional() -> SSM:
+    """Construct an SSM in conventional parametrization."""
+
+    def compute_sample(key, rv):
         mean, cov = rv
         base = jax.random.normal(key, shape=mean.shape, dtype=mean.dtype)
         return mean + jnp.linalg.cholesky(cov) @ base
 
-    def conditional(x, /, model):
+    def parametrize_conditional(x, /, model):
         A, (mean, cov) = model
         return A @ x + mean, cov
 
-    def marginal(rv, /, model):
+    def marginalize(rv, /, model):
         A, (mean, cov) = model
-        return (A @ rv[0] + mean, A @ rv[1] @ A.T + cov)
+        return A @ rv[0] + mean, A @ rv[1] @ A.T + cov
 
-    def condition(rv, model, data):
+    # todo: return the marginal distributions, too, (so we can use the same function for smoothing)
+    def bayes_update(rv, model, data):
         H, (r, R) = model
         mean, cov = rv
         gain = cov @ H.T @ jnp.linalg.inv(H @ cov @ H.T + R)
@@ -41,30 +42,43 @@ def ssm_conventional():
 
     return SSM(
         init_rv=lambda *a: a,
-        sample=sample_,
-        parametrize_conditional=conditional,
-        marginal=marginal,
-        bayes_update=condition,
+        sample=compute_sample,
+        parametrize_conditional=parametrize_conditional,
+        marginalize=marginalize,
+        bayes_update=bayes_update,
     )
 
 
-def ssm_square_root():
+def ssm_square_root() -> SSM:
+    """Construct a state-space model in square-root form."""
+
     def init_rv(m, C):
         return m, jnp.linalg.cholesky(C)
 
-    def sample_(key, rv):
+    def compute_sample(key, rv):
         mean, cholesky = rv
         base = jax.random.normal(key, shape=mean.shape, dtype=mean.dtype)
         return mean + cholesky @ base
 
-    def conditional_(x, /, model):
+    def parametrize_conditional(x, /, model):
         A, (mean, cholesky) = model
         return A @ x + mean, cholesky
 
-    return SSM(init_rv=init_rv, sample=sample_, conditional=conditional_)
+    def not_yet(*_a):
+        raise NotImplementedError
+
+    return SSM(
+        init_rv=init_rv,
+        sample=compute_sample,
+        parametrize_conditional=parametrize_conditional,
+        bayes_update=not_yet,
+        marginalize=not_yet,
+    )
 
 
 def model_car_tracking_velocity(ts, /, noise, diffusion, *, ssm: SSM):
+    """Construct a Wiener-velocity car-tracking model."""
+
     def transition(dt):
         eye_d = jnp.eye(2)
         one_d = jnp.ones((2,))
@@ -124,7 +138,7 @@ def alg_filter_kalman(ssm: SSM) -> Algorithm:
     return Algorithm(
         init=lambda x: x,
         extract=lambda x: x,
-        predict=ssm.marginal,
+        predict=ssm.marginalize,
         update=ssm.bayes_update,
     )
 
