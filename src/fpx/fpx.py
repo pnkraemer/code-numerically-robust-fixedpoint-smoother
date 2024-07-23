@@ -6,22 +6,6 @@ import jax
 from typing import Callable
 
 
-def filter_kalman(data, init, model, ssm):
-    def carry(state, inputs):
-        # Read
-        (y_k, (model_prior, model_obs)) = inputs
-        x_k = state
-
-        # Predict
-        x_kplus = ssm.marginal(x_k, model_prior)
-
-        # Update
-        x_new = ssm.condition(x_kplus, model_obs, y_k)
-        return x_new, x_new
-
-    return jax.lax.scan(carry, xs=(data, model), init=init)
-
-
 @dataclasses.dataclass
 class SSM:
     init_rv: Callable
@@ -78,7 +62,7 @@ def ssm_square_root():
     return SSM(init_rv=init_rv, sample=sample_, conditional=conditional_)
 
 
-def model_car_tracking_velocity(ts, /, noise, diffusion, *, ssm):
+def model_car_tracking_velocity(ts, /, noise, diffusion, *, ssm: SSM):
     def transition(dt):
         eye_d = jnp.eye(2)
         one_d = jnp.ones((2,))
@@ -109,7 +93,7 @@ def model_car_tracking_velocity(ts, /, noise, diffusion, *, ssm):
     return x0, jax.vmap(transition)(jnp.diff(ts))
 
 
-def sample(key, x0, model, *, ssm):
+def sample(key: jax.random.PRNGKey, x0: jax.Array, model, *, ssm: SSM):
     def scan_fun(x, model_k):
         key_k, sample_k = x
         model_prior, model_obs = model_k
@@ -124,3 +108,37 @@ def sample(key, x0, model, *, ssm):
         return (key_k, sample_k), (sample_k, sample_obs_k)
 
     return jax.lax.scan(scan_fun, xs=model, init=(key, x0))
+
+
+@dataclasses.dataclass
+class Algorithm:
+    init: Callable
+    predict: Callable
+    update: Callable
+    extract: Callable
+
+
+def alg_filter_kalman(ssm: SSM) -> Algorithm:
+    return Algorithm(
+        init=lambda x: x,
+        extract=lambda x: x,
+        predict=ssm.marginal,
+        update=ssm.condition,
+    )
+
+
+def estimate_state(data: jax.Array, init, model, algorithm: Algorithm):
+    def step_fun(state, inputs):
+        # Read
+        (y_k, (model_prior, model_obs)) = inputs
+        x_k = state
+
+        # Predict
+        x_kplus = algorithm.predict(x_k, model_prior)
+
+        # Update
+        x_new = algorithm.update(x_kplus, model_obs, y_k)
+        return x_new, algorithm.extract(x_new)
+
+    x0 = algorithm.init(init)
+    return jax.lax.scan(step_fun, xs=(data, model), init=x0)
