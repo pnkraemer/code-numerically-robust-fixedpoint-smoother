@@ -3,19 +3,23 @@
 import dataclasses
 import jax.numpy as jnp
 import jax
+from typing import Callable
 
 
 @dataclasses.dataclass
 class Parametrisation:
-    pass
+    init_rv: Callable
 
 
 def param_conventional():
-    return Parametrisation()
+    return Parametrisation(init_rv=lambda *a: a)
 
 
 def param_square_root():
-    return Parametrisation()
+    def init_rv(m, C):
+        return m, jnp.linalg.cholesky(C)
+
+    return Parametrisation(init_rv=init_rv)
 
 
 def model_car_tracking_velocity(ts, /, noise, diffusion, *, param):
@@ -36,8 +40,8 @@ def model_car_tracking_velocity(ts, /, noise, diffusion, *, param):
         r = jnp.kron(r_1d, eye_d)
         R = jnp.kron(R_1d, eye_d)
 
-        rv_q = param.rv_from_multivariate_normal(q, Q)
-        rv_r = param.rv_from_multivariate_normal(r, R)
+        rv_q = param.init_rv(q, Q)
+        rv_r = param.init_rv(r, R)
         return (A, rv_q), (H, rv_r)
 
     return jax.vmap(transition)(jnp.diff(ts))

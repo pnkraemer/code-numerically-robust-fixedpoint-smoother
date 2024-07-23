@@ -18,7 +18,7 @@ def case_param_square_root():
 def test_trajectory_estimated(param):
     ts = jnp.linspace(0, 1, 7)
 
-    model = ssm.model_car_tracking_velocity(ts, param=param)
+    model = ssm.model_car_tracking_velocity(ts, noise=0.1, diffusion=1.0, param=param)
     key = jax.random.PRNGKey(seed=1)
     data = ssm.sample(key, model, param=param)
 
