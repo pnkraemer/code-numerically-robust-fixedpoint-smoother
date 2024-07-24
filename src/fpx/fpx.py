@@ -42,7 +42,7 @@ class Impl(Generic[T]):
     bayes_update: Callable[[T, Cond], tuple[T, Cond]]
 
 
-def impl_square_root() -> Impl:
+def impl_cholesky_based() -> Impl:
     class SqrtNormal(NamedTuple):
         mean: jax.Array
         cholesky: jax.Array
@@ -156,7 +156,7 @@ def _revert_conditional(*, R_X_F, R_X, R_YX):
     return R_Y, (R_XY, G)
 
 
-def impl_conventional() -> Impl:
+def impl_covariance_based() -> Impl:
     """Construct a state-space model implementation."""
 
     class Normal(NamedTuple):

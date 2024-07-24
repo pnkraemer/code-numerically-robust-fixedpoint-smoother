@@ -5,15 +5,10 @@ import time
 from fpx import fpx
 
 
-# todo: rename conventional to covariance_based and square_root to cholesky_based
-# todo: reflect this renaming in the paper, too
-# todo: mention that we do triangularisation-based square-roots only?
-
 # todo: count the number of NaN runs for different seeds and for increasing Ns
 # todo: test the time of all methods for increasing N and increasing d
 #  (currently, this script does it all, but nothing well)
-
-# e.g., get inspired by https://arxiv.org/pdf/2207.00426
+# get inspired by Yaghoobi et al. 2022 (parallel sigma point..., reference is in the paper draft)
 
 
 def main(seed_: int, implementation: fpx.Impl, /, fixedpoint, nruns, ndim, nsteps):
@@ -55,8 +50,8 @@ if __name__ == "__main__":
 
     for seed in range(10):
         for label, impl in [
-            ("Covariance-based", fpx.impl_conventional()),
-            ("Cholesky-based", fpx.impl_square_root()),
+            ("Covariance-based", fpx.impl_covariance_based()),
+            ("Cholesky-based", fpx.impl_cholesky_based()),
         ]:
             print()
             print(f"\n{label} code (fastest of n={num_runs} runs):")

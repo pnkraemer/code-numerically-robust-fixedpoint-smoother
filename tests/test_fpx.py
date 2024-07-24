@@ -7,12 +7,12 @@ import jax
 from fpx import fpx
 
 
-def case_impl_conventional():
-    return fpx.impl_conventional()
+def case_impl_covariance_based():
+    return fpx.impl_covariance_based()
 
 
-def case_impl_square_root():
-    return fpx.impl_square_root()
+def case_impl_cholesky_based():
+    return fpx.impl_cholesky_based()
 
 
 @pytest_cases.parametrize_with_cases("impl", cases=".")
@@ -135,7 +135,7 @@ def test_fixedpoint_smoother_matches_state_augmented_filter(impl):
 
 
 def test_square_root_parametrisation_matches_conventional_parametrisation_for_filter():
-    impl_conv = fpx.impl_conventional()
+    impl_conv = fpx.impl_covariance_based()
     ts = jnp.linspace(0, 1, num=100)
     ssm_conv = fpx.ssm_car_tracking_velocity(
         ts, noise=1e-4, diffusion=1.0, impl=impl_conv
@@ -150,7 +150,7 @@ def test_square_root_parametrisation_matches_conventional_parametrisation_for_fi
     assert data.shape == (len(ts) - 1, 2)
 
     # Replicate with sqrt parametrisation
-    impl_sqrt = fpx.impl_square_root()
+    impl_sqrt = fpx.impl_cholesky_based()
     ssm_sqrt = fpx.ssm_car_tracking_velocity(
         ts, noise=1e-4, diffusion=1.0, impl=impl_sqrt
     )
