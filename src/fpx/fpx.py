@@ -8,7 +8,6 @@ from typing import Callable, NamedTuple, Any
 
 @dataclasses.dataclass
 class SSM:
-    """ABC"""
     rv_initialize: Callable
     rv_sample: Callable
     parametrize_conditional: Callable

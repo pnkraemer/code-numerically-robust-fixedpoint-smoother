@@ -34,6 +34,8 @@ print(help(fpx))
 and access all code via `fpx.*` ("fpx" stands for "fixed-point smoothing in JAX").
 Consult the test file in `tests/test_fpx.py` for examples.
 
+You may also run `mkdocs serve` to get a list of all types and functions.
+
 ## Working with the source
 
 After following the installation instructions above, the test-dependencies are installed.
