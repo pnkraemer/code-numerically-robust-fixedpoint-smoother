@@ -3,7 +3,7 @@
 import dataclasses
 import jax.numpy as jnp
 import jax
-from typing import Callable
+from typing import Callable, NamedTuple, Any
 
 
 @dataclasses.dataclass
@@ -76,7 +76,22 @@ def ssm_square_root() -> SSM:
     )
 
 
-def model_car_tracking_velocity(ts, /, noise, diffusion, *, ssm: SSM):
+class Conditional(NamedTuple):
+    transition: jax.Array
+    noise: Any
+
+
+class Dynamics(NamedTuple):
+    latent: Conditional
+    observation: Conditional
+
+
+class Model(NamedTuple):
+    init: Any
+    dynamics: Dynamics
+
+
+def model_car_tracking_velocity(ts, /, noise, diffusion, *, ssm: SSM) -> Model:
     """Construct a Wiener-velocity car-tracking model."""
 
     def transition(dt):
@@ -100,16 +115,16 @@ def model_car_tracking_velocity(ts, /, noise, diffusion, *, ssm: SSM):
 
         rv_q = ssm.rv_initialize(q, Q)
         rv_r = ssm.rv_initialize(r, R)
-        return (A, rv_q), (H, rv_r)
+        return Dynamics(latent=Conditional(A, rv_q), observation=Conditional(H, rv_r))
 
     m0 = jnp.zeros((4,))
     C0 = jnp.eye(4)
     x0 = ssm.rv_initialize(m0, C0)
 
-    return x0, jax.vmap(transition)(jnp.diff(ts))
+    return Model(x0, jax.vmap(transition)(jnp.diff(ts)))
 
 
-def sample_sequence(key: jax.random.PRNGKey, x0: jax.Array, model, *, ssm: SSM):
+def sample_sequence(key, x0: jax.Array, model, *, ssm: SSM):
     def scan_fun(x, model_k):
         key_k, sample_k = x
         model_prior, model_obs = model_k
