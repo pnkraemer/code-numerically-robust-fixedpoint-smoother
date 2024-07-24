@@ -98,7 +98,7 @@ def test_state_augmented_filter_matches_rts_smoother_at_initial_state(impl):
 
     # Run a fixedpoint-smoother via state-augmented filtering
     # and via marginalising over an RTS solution
-    initial_rts, _aux = fpx.estimate_fixedpoint_via_rts(data, ssm, impl=impl)
+    initial_rts, _aux = fpx.estimate_fixedpoint_via_fixedinterval(data, ssm, impl=impl)
     initial_fps, _aux = fpx.estimate_fixedpoint_via_filter(data, ssm, impl=impl)
 
     # Check that all leaves match

@@ -385,7 +385,7 @@ def estimate_fixedpoint_via_filter(data: jax.Array, ssm: SSM, *, impl: Impl):
 
 
 @functools.partial(jax.jit, static_argnames=["impl"])
-def estimate_fixedpoint_via_rts(data: jax.Array, ssm: SSM, *, impl: Impl):
+def estimate_fixedpoint_via_fixedinterval(data: jax.Array, ssm: SSM, *, impl: Impl):
     (terminal, conds), aux = estimate_smoother_rts(data, ssm, impl=impl)
     marginals = sequence_marginalize(terminal, conds, impl=impl, reverse=True)
     initial_rts = jax.tree.map(lambda s: s[0, ...], marginals)
