@@ -124,7 +124,32 @@ def test_fixedpoint_smoother_matches_state_augmented_filter(impl):
         assert jnp.allclose(x1, x2, atol=1e-4)
 
 
-# todo: implement a fixed-point smoother that matches the state-augmented filter
+def test_square_root_parametrisation_matches_conventional_parametrisation():
+    impl_conv = fpx.impl_conventional()
+    ts = jnp.linspace(0, 1)
+    ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl_conv)
+
+    key = jax.random.PRNGKey(seed=1)
+    key, subkey = jax.random.split(key, num=2)
+    x0 = impl_conv.rv_sample(subkey, ssm.init)
+    _, (latent, data) = fpx.sequence_sample(key, x0, ssm.dynamics, impl=impl_conv)
+    assert latent.shape == (len(ts) - 1, 4)
+    assert data.shape == (len(ts) - 1, 2)
+
+    rv_conv, _aux = fpx.estimate_filter_kalman(data, ssm, impl=impl_conv)
+
+    # Replicate with sqrt parametrisation
+    impl_sqrt = fpx.impl_square_root()
+    ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl_sqrt)
+    rv_sqrt, _aux = fpx.estimate_filter_kalman(data, ssm, impl=impl_sqrt)
+
+    rv_conv = impl_conv.rv_to_mvnorm(rv_conv)
+    rv_sqrt = impl_sqrt.rv_to_mvnorm(rv_sqrt)
+
+    for x1, x2 in zip(jax.tree.leaves(rv_conv), jax.tree.leaves(rv_sqrt)):
+        assert jnp.allclose(x1, x2)
+
+
 # todo: implement all these methods in sqrt-form
 
 

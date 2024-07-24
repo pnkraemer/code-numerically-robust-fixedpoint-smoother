@@ -29,7 +29,9 @@ class Dynamics(NamedTuple):
 class Impl(Generic[T]):
     """State-space model implementation."""
 
+    # todo: group conditional_* methods together (also by name)
     rv_initialize: Callable[[jax.Array, jax.Array], T]
+    rv_to_mvnorm: Callable[[T], tuple[jax.Array, jax.Array]]
     rv_sample: Callable[[Any, T], jax.Array]
     rv_fixedpoint_augment: Callable[[T], T]
     rv_fixedpoint_select: Callable[[T], T]
@@ -38,6 +40,24 @@ class Impl(Generic[T]):
     conditional_merge: Callable[[Cond, Cond], Cond]
     marginalize: Callable[[T, Cond], T]
     bayes_update: Callable[[T, Cond], tuple[T, Cond]]
+
+
+def impl_square_root() -> Impl:
+    def not_yet(*_a):
+        raise NotImplementedError
+
+    return Impl(
+        rv_initialize=not_yet,
+        rv_to_mvnorm=not_yet,
+        rv_sample=not_yet,
+        rv_fixedpoint_select=not_yet,
+        rv_fixedpoint_augment=not_yet,
+        dynamics_fixedpoint=not_yet,
+        parametrize_conditional=not_yet,
+        conditional_merge=not_yet,
+        marginalize=not_yet,
+        bayes_update=not_yet,
+    )
 
 
 def impl_conventional() -> Impl:
@@ -106,6 +126,7 @@ def impl_conventional() -> Impl:
         return Cond(A, Normal(m, C))
 
     return Impl(
+        rv_to_mvnorm=lambda rv: (rv.mean, rv.cov),
         rv_initialize=lambda m, c: Normal(m, c),
         rv_sample=rv_sample,
         parametrize_conditional=parametrize_conditional,
