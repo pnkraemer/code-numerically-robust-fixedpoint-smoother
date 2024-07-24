@@ -9,10 +9,10 @@ from typing import Callable, NamedTuple, Any, TypeVar, Generic
 T = TypeVar("T")
 
 
-class GaussCond(NamedTuple):
+class Cond(NamedTuple):
     """Affine Gaussian conditional distributions."""
 
-    transition: jax.Array
+    A: jax.Array
     noise: Any
 
 
@@ -22,41 +22,41 @@ class Impl(Generic[T]):
 
     rv_initialize: Callable[[jax.Array, jax.Array], T]
     rv_sample: Callable[[Any, T], jax.Array]
-    parametrize_conditional: Callable[[jax.Array, GaussCond], T]
-    marginalize: Callable[[T, GaussCond], T]
-    bayes_update: Callable[[T, GaussCond], tuple[T, GaussCond]]
+    parametrize_conditional: Callable[[jax.Array, Cond], T]
+    marginalize: Callable[[T, Cond], T]
+    bayes_update: Callable[[T, Cond], tuple[T, Cond]]
 
 
 def impl_conventional() -> Impl:
     """Construct a state-space model implementation."""
 
-    def rv_sample(key, rv):
-        mean, cov = rv
-        base = jax.random.normal(key, shape=mean.shape, dtype=mean.dtype)
-        return mean + jnp.linalg.cholesky(cov) @ base
+    class Normal(NamedTuple):
+        mean: jax.Array
+        cov: jax.Array
 
-    def parametrize_conditional(x, /, ssm):
-        A, (mean, cov) = ssm
-        return A @ x + mean, cov
+    def rv_sample(key, /, rv: Normal) -> jax.Array:
+        base = jax.random.normal(key, shape=rv.mean.shape, dtype=rv.mean.dtype)
+        return rv.mean + jnp.linalg.cholesky(rv.cov) @ base
 
-    def marginalize(rv, /, ssm):
-        A, (mean, cov) = ssm
-        return A @ rv[0] + mean, A @ rv[1] @ A.T + cov
+    def parametrize_conditional(x: jax.Array, /, cond: Cond) -> Normal:
+        return Normal(cond.A @ x + cond.noise.mean, cond.noise.cov)
 
-    def bayes_update(rv, ssm):
-        H, (r, R) = ssm
-        m, C = rv
+    def marginalize(rv: Normal, /, cond: Cond) -> Normal:
+        mean = cond.A @ rv.mean + cond.noise.mean
+        cov = cond.A @ rv.cov @ cond.A.T + cond.noise.cov
+        return Normal(mean, cov)
 
-        s = H @ m + r
-        S = H @ C @ H.T + R
+    def bayes_update(rv: Normal, cond: Cond) -> tuple[Normal, Cond]:
+        s = cond.A @ rv.mean + cond.noise.mean
+        S = cond.A @ rv.cov @ cond.A.T + cond.noise.cov
 
-        gain = C @ H.T @ jnp.linalg.inv(S)
-        mean_new = m - gain @ s
-        cov_new = C - gain @ S @ gain.T
-        return (s, S), GaussCond(gain, (mean_new, cov_new))
+        gain = rv.cov @ cond.A.T @ jnp.linalg.inv(S)
+        mean_new = rv.mean - gain @ s
+        cov_new = rv.cov - gain @ S @ gain.T
+        return Normal(s, S), Cond(gain, Normal(mean_new, cov_new))
 
     return Impl(
-        rv_initialize=lambda m, c: (m, c),
+        rv_initialize=lambda m, c: Normal(m, c),
         rv_sample=rv_sample,
         parametrize_conditional=parametrize_conditional,
         marginalize=marginalize,
@@ -67,8 +67,8 @@ def impl_conventional() -> Impl:
 class Dynamics(NamedTuple):
     """State-space model dynamics."""
 
-    latent: GaussCond
-    observation: GaussCond
+    latent: Cond
+    observation: Cond
 
 
 class SSM(NamedTuple):
@@ -78,10 +78,10 @@ class SSM(NamedTuple):
     dynamics: Dynamics
 
 
-def ssm_car_tracking_velocity(ts, /, noise, diffusion, *, impl: Impl) -> SSM:
+def ssm_car_tracking_velocity(ts, /, noise, diffusion, impl: Impl) -> SSM:
     """Construct a Wiener-velocity car-tracking model."""
 
-    def transition(dt):
+    def transition(dt) -> Dynamics:
         eye_d = jnp.eye(2)
         one_d = jnp.ones((2,))
 
@@ -102,37 +102,36 @@ def ssm_car_tracking_velocity(ts, /, noise, diffusion, *, impl: Impl) -> SSM:
 
         rv_q = impl.rv_initialize(q, Q)
         rv_r = impl.rv_initialize(r, R)
-        return Dynamics(latent=GaussCond(A, rv_q), observation=GaussCond(H, rv_r))
+        return Dynamics(latent=Cond(A, rv_q), observation=Cond(H, rv_r))
 
     m0 = jnp.zeros((4,))
     C0 = jnp.eye(4)
     x0 = impl.rv_initialize(m0, C0)
 
-    return SSM(x0, jax.vmap(transition)(jnp.diff(ts)))
+    return SSM(init=x0, dynamics=jax.vmap(transition)(jnp.diff(ts)))
 
 
-def sample_sequence(key, x0: jax.Array, ssm: SSM, *, impl: Impl):
-    def scan_fun(x, ssm_k):
+def sample_sequence(key, x0: jax.Array, dynamics: Dynamics, impl: Impl):
+    def scan_fun(x, dynamics_k: Dynamics):
         key_k, sample_k = x
-        ssm_prior, ssm_obs = ssm_k
 
         key_k, subkey_k = jax.random.split(key_k, num=2)
-        rv = impl.parametrize_conditional(sample_k, ssm_prior)
+        rv = impl.parametrize_conditional(sample_k, dynamics_k.latent)
         sample_k = impl.rv_sample(subkey_k, rv)
 
         key_k, subkey_k = jax.random.split(key_k, num=2)
-        rv_obs = impl.parametrize_conditional(sample_k, ssm_obs)
+        rv_obs = impl.parametrize_conditional(sample_k, dynamics_k.observation)
         sample_obs_k = impl.rv_sample(subkey_k, rv_obs)
         return (key_k, sample_k), (sample_k, sample_obs_k)
 
-    return jax.lax.scan(scan_fun, xs=ssm, init=(key, x0))
+    return jax.lax.scan(scan_fun, xs=dynamics, init=(key, x0))
 
 
 @dataclasses.dataclass
 class Algorithm(Generic[T]):
     init: Callable[[Any], T]
-    predict: Callable[[T, GaussCond], T]
-    update: Callable[[T, GaussCond, jax.Array], T]
+    predict: Callable[[T, Cond], T]
+    update: Callable[[T, Cond, jax.Array], T]
     extract: Callable[[T], Any]
 
 
