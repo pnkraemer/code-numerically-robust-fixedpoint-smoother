@@ -7,7 +7,9 @@ from typing import Callable, NamedTuple, Any
 
 
 @dataclasses.dataclass
-class SSM:
+class Impl:
+    """State-space model implementation."""
+
     rv_initialize: Callable
     rv_sample: Callable
     parametrize_conditional: Callable
@@ -15,32 +17,32 @@ class SSM:
     bayes_update: Callable
 
 
-def ssm_conventional() -> SSM:
-    """Construct an SSM in conventional parametrization."""
+def impl_conventional() -> Impl:
+    """Construct a state-space model implementation."""
 
     def compute_sample(key, rv):
         mean, cov = rv
         base = jax.random.normal(key, shape=mean.shape, dtype=mean.dtype)
         return mean + jnp.linalg.cholesky(cov) @ base
 
-    def parametrize_conditional(x, /, model):
-        A, (mean, cov) = model
+    def parametrize_conditional(x, /, ssm):
+        A, (mean, cov) = ssm
         return A @ x + mean, cov
 
-    def marginalize(rv, /, model):
-        A, (mean, cov) = model
+    def marginalize(rv, /, ssm):
+        A, (mean, cov) = ssm
         return A @ rv[0] + mean, A @ rv[1] @ A.T + cov
 
     # todo: return the marginal distributions, too, (so we can use the same function for smoothing)
-    def bayes_update(rv, model, data):
-        H, (r, R) = model
+    def bayes_update(rv, ssm, data):
+        H, (r, R) = ssm
         mean, cov = rv
         gain = cov @ H.T @ jnp.linalg.inv(H @ cov @ H.T + R)
         mean_new = mean - gain @ (H @ mean + r - data)
         cov_new = cov - gain @ (H @ cov @ H.T + R) @ gain.T
         return mean_new, cov_new
 
-    return SSM(
+    return Impl(
         rv_initialize=lambda *a: a,
         rv_sample=compute_sample,
         parametrize_conditional=parametrize_conditional,
@@ -49,8 +51,8 @@ def ssm_conventional() -> SSM:
     )
 
 
-def ssm_square_root() -> SSM:
-    """Construct a state-space model in square-root form."""
+def impl_square_root() -> Impl:
+    """Construct a state-space ssm implementation using square-root form."""
 
     def rv_initialize(m, C):
         return m, jnp.linalg.cholesky(C)
@@ -60,14 +62,14 @@ def ssm_square_root() -> SSM:
         base = jax.random.normal(key, shape=mean.shape, dtype=mean.dtype)
         return mean + cholesky @ base
 
-    def parametrize_conditional(x, /, model):
-        A, (mean, cholesky) = model
+    def parametrize_conditional(x, /, ssm):
+        A, (mean, cholesky) = ssm
         return A @ x + mean, cholesky
 
     def not_yet(*_a):
         raise NotImplementedError
 
-    return SSM(
+    return Impl(
         rv_initialize=rv_initialize,
         rv_sample=rv_sample,
         parametrize_conditional=parametrize_conditional,
@@ -76,22 +78,28 @@ def ssm_square_root() -> SSM:
     )
 
 
-class Conditional(NamedTuple):
+class GaussCondAffine(NamedTuple):
+    """Affine Gaussian conditional distributions."""
+
     transition: jax.Array
     noise: Any
 
 
 class Dynamics(NamedTuple):
-    latent: Conditional
-    observation: Conditional
+    """State-space model dynamics."""
+
+    latent: GaussCondAffine
+    observation: GaussCondAffine
 
 
-class Model(NamedTuple):
+class SSM(NamedTuple):
+    """State-space model."""
+
     init: Any
     dynamics: Dynamics
 
 
-def model_car_tracking_velocity(ts, /, noise, diffusion, *, ssm: SSM) -> Model:
+def ssm_car_tracking_velocity(ts, /, noise, diffusion, *, impl: Impl) -> SSM:
     """Construct a Wiener-velocity car-tracking model."""
 
     def transition(dt):
@@ -113,32 +121,34 @@ def model_car_tracking_velocity(ts, /, noise, diffusion, *, ssm: SSM) -> Model:
         r = jnp.kron(r_1d, one_d)
         R = jnp.kron(R_1d, eye_d)
 
-        rv_q = ssm.rv_initialize(q, Q)
-        rv_r = ssm.rv_initialize(r, R)
-        return Dynamics(latent=Conditional(A, rv_q), observation=Conditional(H, rv_r))
+        rv_q = impl.rv_initialize(q, Q)
+        rv_r = impl.rv_initialize(r, R)
+        return Dynamics(
+            latent=GaussCondAffine(A, rv_q), observation=GaussCondAffine(H, rv_r)
+        )
 
     m0 = jnp.zeros((4,))
     C0 = jnp.eye(4)
-    x0 = ssm.rv_initialize(m0, C0)
+    x0 = impl.rv_initialize(m0, C0)
 
-    return Model(x0, jax.vmap(transition)(jnp.diff(ts)))
+    return SSM(x0, jax.vmap(transition)(jnp.diff(ts)))
 
 
-def sample_sequence(key, x0: jax.Array, model: Model, *, ssm: SSM):
-    def scan_fun(x, model_k):
+def sample_sequence(key, x0: jax.Array, ssm: SSM, *, impl: Impl):
+    def scan_fun(x, ssm_k):
         key_k, sample_k = x
-        model_prior, model_obs = model_k
+        ssm_prior, ssm_obs = ssm_k
 
         key_k, subkey_k = jax.random.split(key_k, num=2)
-        rv = ssm.parametrize_conditional(sample_k, model_prior)
-        sample_k = ssm.rv_sample(subkey_k, rv)
+        rv = impl.parametrize_conditional(sample_k, ssm_prior)
+        sample_k = impl.rv_sample(subkey_k, rv)
 
         key_k, subkey_k = jax.random.split(key_k, num=2)
-        rv_obs = ssm.parametrize_conditional(sample_k, model_obs)
-        sample_obs_k = ssm.rv_sample(subkey_k, rv_obs)
+        rv_obs = impl.parametrize_conditional(sample_k, ssm_obs)
+        sample_obs_k = impl.rv_sample(subkey_k, rv_obs)
         return (key_k, sample_k), (sample_k, sample_obs_k)
 
-    return jax.lax.scan(scan_fun, xs=model, init=(key, x0))
+    return jax.lax.scan(scan_fun, xs=ssm, init=(key, x0))
 
 
 @dataclasses.dataclass
@@ -149,27 +159,27 @@ class Algorithm:
     extract: Callable
 
 
-def alg_filter_kalman(ssm: SSM) -> Algorithm:
+def alg_filter_kalman(impl: Impl) -> Algorithm:
     return Algorithm(
         init=lambda x: x,
         extract=lambda x: x,
-        predict=ssm.marginalize,
-        update=ssm.bayes_update,
+        predict=impl.marginalize,
+        update=impl.bayes_update,
     )
 
 
-def estimate_state(data: jax.Array, init, model: Model, algorithm: Algorithm):
+def estimate_state(data: jax.Array, init, ssm: SSM, algorithm: Algorithm):
     def step_fun(state, inputs):
         # Read
-        (y_k, (model_prior, model_obs)) = inputs
+        (y_k, (ssm_prior, ssm_obs)) = inputs
         x_k = state
 
         # Predict
-        x_kplus = algorithm.predict(x_k, model_prior)
+        x_kplus = algorithm.predict(x_k, ssm_prior)
 
         # Update
-        x_new = algorithm.update(x_kplus, model_obs, y_k)
+        x_new = algorithm.update(x_kplus, ssm_obs, y_k)
         return x_new, algorithm.extract(x_new)
 
     x0 = algorithm.init(init)
-    return jax.lax.scan(step_fun, xs=(data, model), init=x0)
+    return jax.lax.scan(step_fun, xs=(data, ssm), init=x0)
