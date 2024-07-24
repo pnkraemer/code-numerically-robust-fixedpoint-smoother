@@ -8,6 +8,7 @@ from typing import Callable, NamedTuple, Any
 
 @dataclasses.dataclass
 class SSM:
+    """ABC"""
     rv_initialize: Callable
     rv_sample: Callable
     parametrize_conditional: Callable
@@ -124,7 +125,7 @@ def model_car_tracking_velocity(ts, /, noise, diffusion, *, ssm: SSM) -> Model:
     return Model(x0, jax.vmap(transition)(jnp.diff(ts)))
 
 
-def sample_sequence(key, x0: jax.Array, model, *, ssm: SSM):
+def sample_sequence(key, x0: jax.Array, model: Model, *, ssm: SSM):
     def scan_fun(x, model_k):
         key_k, sample_k = x
         model_prior, model_obs = model_k
@@ -158,7 +159,7 @@ def alg_filter_kalman(ssm: SSM) -> Algorithm:
     )
 
 
-def estimate_state(data: jax.Array, init, model, algorithm: Algorithm):
+def estimate_state(data: jax.Array, init, model: Model, algorithm: Algorithm):
     def step_fun(state, inputs):
         # Read
         (y_k, (model_prior, model_obs)) = inputs

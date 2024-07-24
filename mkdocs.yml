@@ -1,0 +1,31 @@
+site_name: Numerically stable fixed-point smoothing in JAX
+
+theme:
+  name: "material"
+
+
+plugins:
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_root_heading: true
+            show_root_toc_entry: true
+            show_root_full_path: true
+            show_root_members_full_path: true
+            show_object_full_path: true
+            show_category_heading: false
+            docstring_style: numpy
+            show_if_no_docstring: true
+            members_order: alphabetical
+            annotations_path: brief
+            show_signature: true
+            show_signature_annotations: true
+            separate_signature: false
+            docstring_section_style: list
+            show_source: true
+watch: [src/fpx]
+
+nav:
+  - index.md
+  - reference.md
