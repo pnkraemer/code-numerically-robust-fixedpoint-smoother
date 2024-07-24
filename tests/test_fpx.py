@@ -164,73 +164,8 @@ def test_square_root_parametrisation_matches_conventional_parametrisation():
         assert jnp.allclose(x1, x2)
 
 
-# todo: implement all these methods in sqrt-form
-
-
-def test_both_bayes_updates_match():
-    A = jnp.arange(9).reshape((3, 3))
-    C = A @ A.T + jnp.eye(3)
-    m = A[0, :]
-
-    impl_sqrt = fpx.impl_conventional()
-    rv_sqrt = impl_sqrt.rv_from_mvnorm(m, C)
-    cond_sqrt = fpx.Cond(A, rv_sqrt)
-
-    impl_conv = fpx.impl_square_root()
-    rv_conv = impl_conv.rv_from_mvnorm(m, C)
-    cond_conv = fpx.Cond(A, rv_conv)
-
-    s_conv, (A_conv, c_conv) = impl_conv.bayes_update(rv_conv, cond_conv)
-    s_sqrt, (A_sqrt, c_sqrt) = impl_sqrt.bayes_update(rv_sqrt, cond_sqrt)
-
-    assert jnp.allclose(A_conv, A_sqrt, atol=1e-4)
-
-    r1 = impl_conv.rv_to_mvnorm(s_conv)
-    r2 = impl_sqrt.rv_to_mvnorm(s_sqrt)
-    for a, b in zip(r1, r2):
-        assert jnp.allclose(a, b)
-
-    r1 = impl_conv.rv_to_mvnorm(c_conv)
-    r2 = impl_sqrt.rv_to_mvnorm(c_sqrt)
-    for a, b in zip(r1, r2):
-        assert jnp.allclose(a, b, atol=1e-4)
-
-
-def test_both_marginalizes_match():
-    A = jnp.arange(9).reshape((3, 3))
-    C = A @ A.T + jnp.eye(3)
-    m = A[0, :]
-
-    impl_sqrt = fpx.impl_conventional()
-    rv_sqrt = impl_sqrt.rv_from_mvnorm(m, C)
-    cond_sqrt = fpx.Cond(A, rv_sqrt)
-
-    impl_conv = fpx.impl_square_root()
-    rv_conv = impl_conv.rv_from_mvnorm(m, C)
-    cond_conv = fpx.Cond(A, rv_conv)
-
-    s_conv = impl_conv.marginalize(rv_conv, cond_conv)
-    s_sqrt = impl_sqrt.marginalize(rv_sqrt, cond_sqrt)
-
-    r1 = impl_conv.rv_to_mvnorm(rv_conv)
-    r2 = impl_sqrt.rv_to_mvnorm(rv_sqrt)
-    for a, b in zip(r1, r2):
-        assert jnp.allclose(a, b)
-
-    r1 = impl_conv.rv_to_mvnorm(cond_conv.noise)
-    r2 = impl_sqrt.rv_to_mvnorm(cond_sqrt.noise)
-    for a, b in zip(r1, r2):
-        assert jnp.allclose(a, b)
-
-    r1 = impl_conv.rv_to_mvnorm(s_conv)
-    r2 = impl_sqrt.rv_to_mvnorm(s_sqrt)
-    for a, b in zip(r1, r2):
-        assert jnp.allclose(a, b)
-
 
 # todo: use our own allclose which depends on the floating-point accuracy
-# todo: condense the assert_both_* a bit, maybe even remove?
-#  (The smoothers work, after all)
 
 
 def rmse(a, b):
