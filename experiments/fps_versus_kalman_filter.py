@@ -5,7 +5,15 @@ import time
 from fpx import fpx
 
 
-def main(seed: int, implementation: fpx.Impl, /, fixedpoint, nruns, ndim, nsteps):
+# todo: rename conventional to covariance_based and square_root to cholesky_based
+# todo: reflect this renaming in the paper, too
+
+# todo: count the number of NaN runs for different seeds and for increasing Ns
+# todo: test the time of all methods for increasing N and increasing d
+#  (currently, this script does it all, but nothing well)
+
+
+def main(seed_: int, implementation: fpx.Impl, /, fixedpoint, nruns, ndim, nsteps):
     # Set up a test problem
     ts = jnp.linspace(0, 1, num=nsteps)
     ssm = fpx.ssm_car_tracking_acceleration(
@@ -13,7 +21,7 @@ def main(seed: int, implementation: fpx.Impl, /, fixedpoint, nruns, ndim, nsteps
     )
 
     # Create some data
-    key = jax.random.PRNGKey(seed=seed)
+    key = jax.random.PRNGKey(seed=seed_)
     key, subkey = jax.random.split(key, num=2)
     x0 = impl.rv_sample(subkey, ssm.init)
     _, (latent, data) = fpx.sequence_sample(key, x0, ssm.dynamics, impl=implementation)
@@ -37,78 +45,47 @@ def main(seed: int, implementation: fpx.Impl, /, fixedpoint, nruns, ndim, nsteps
 
 
 if __name__ == "__main__":
-    seed = 3
+    seed = 3  # todo: check 100 seeds and count the number of NaN runs for stability
     num_runs = 3
-    num_dims = 5
-    num_steps = 100
+    num_dims = 2
+    num_steps = 1000  # todo: increase num_steps to plot stability and costs
 
-    print()
-    print(f"\nSquare-root code (fastest of n={num_runs} runs):")
-    print("-----------------------------------------------------")
-    impl = fpx.impl_square_root()
-    print("Via filter:")
-    t = main(
-        seed,
-        impl,
-        fixedpoint=fpx.estimate_fixedpoint_via_filter,
-        nruns=num_runs,
-        ndim=num_dims,
-        nsteps=num_steps,
-    )
-    print("\t", min(t))
-    print("Via fixed-interval smoother:")
-    t = main(
-        seed,
-        impl,
-        fixedpoint=fpx.estimate_fixedpoint_via_fixedinterval,
-        nruns=num_runs,
-        ndim=num_dims,
-        nsteps=num_steps,
-    )
-    print("\t", min(t))
-    print("Via proper recursion:")
-    t = main(
-        seed,
-        impl,
-        fixedpoint=fpx.estimate_fixedpoint,
-        nruns=num_runs,
-        ndim=num_dims,
-        nsteps=num_steps,
-    )
-    print("\t", min(t))
-    print()
-
-    print(f"\nConventional code (fastest of n={num_runs} runs):")
-    print("-----------------------------------------------------")
-    impl = fpx.impl_conventional()
-    print("Via filter:")
-    t = main(
-        seed,
-        impl,
-        fixedpoint=fpx.estimate_fixedpoint_via_filter,
-        nruns=num_runs,
-        ndim=num_dims,
-        nsteps=num_steps,
-    )
-    print("\t", min(t))
-    print("Via fixed-interval smoother:")
-    t = main(
-        seed,
-        impl,
-        fixedpoint=fpx.estimate_fixedpoint_via_fixedinterval,
-        nruns=num_runs,
-        ndim=num_dims,
-        nsteps=num_steps,
-    )
-    print("\t", min(t))
-    print("Via proper recursion:")
-    t = main(
-        seed,
-        impl,
-        fixedpoint=fpx.estimate_fixedpoint,
-        nruns=num_runs,
-        ndim=num_dims,
-        nsteps=num_steps,
-    )
-    print("\t", min(t))
-    print()
+    for seed in range(10):
+        for label, impl in [
+            ("Covariance-based", fpx.impl_conventional()),
+            ("Cholesky-based", fpx.impl_square_root()),
+        ]:
+            print()
+            print(f"\n{label} code (fastest of n={num_runs} runs):")
+            print("-----------------------------------------------------")
+            print("Via filter:")
+            t = main(
+                seed,
+                impl,
+                fixedpoint=fpx.estimate_fixedpoint_via_filter,
+                nruns=num_runs,
+                ndim=num_dims,
+                nsteps=num_steps,
+            )
+            print("\t", min(t))
+            print("Via fixed-interval smoother:")
+            t = main(
+                seed,
+                impl,
+                fixedpoint=fpx.estimate_fixedpoint_via_fixedinterval,
+                nruns=num_runs,
+                ndim=num_dims,
+                nsteps=num_steps,
+            )
+            print("\t", min(t))
+            print("Via proper recursion:")
+            t = main(
+                seed,
+                impl,
+                fixedpoint=fpx.estimate_fixedpoint,
+                nruns=num_runs,
+                ndim=num_dims,
+                nsteps=num_steps,
+            )
+            print("\t", min(t))
+            print()
