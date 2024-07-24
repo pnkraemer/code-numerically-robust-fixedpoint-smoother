@@ -28,16 +28,14 @@ class Dynamics(NamedTuple):
 @dataclasses.dataclass
 class Impl(Generic[T]):
     """State-space model implementation."""
-
-    # todo: group conditional_* methods together (also by name)
-    rv_initialize: Callable[[jax.Array, jax.Array], T]
+    rv_from_mvnorm: Callable[[jax.Array, jax.Array], T]
     rv_to_mvnorm: Callable[[T], tuple[jax.Array, jax.Array]]
     rv_sample: Callable[[Any, T], jax.Array]
     rv_fixedpoint_augment: Callable[[T], T]
     rv_fixedpoint_select: Callable[[T], T]
-    dynamics_fixedpoint: Callable[[Dynamics], Dynamics]
-    parametrize_conditional: Callable[[jax.Array, Cond], T]
+    conditional_parametrize: Callable[[jax.Array, Cond], T]
     conditional_merge: Callable[[Cond, Cond], Cond]
+    dynamics_fixedpoint_augment: Callable[[Dynamics], Dynamics]
     marginalize: Callable[[T, Cond], T]
     bayes_update: Callable[[T, Cond], tuple[T, Cond]]
 
@@ -47,7 +45,7 @@ def impl_square_root() -> Impl:
         mean: jax.Array
         cholesky: jax.Array
 
-    def rv_initialize(m, c) -> SqrtNormal:
+    def rv_from_mvnorm(m, c) -> SqrtNormal:
         return SqrtNormal(m, jnp.linalg.cholesky(c))
 
     def marginalize(rv: SqrtNormal, cond: Cond):
@@ -69,7 +67,7 @@ def impl_square_root() -> Impl:
         mean_new = rv.mean - G @ s
         return SqrtNormal(s, R_y.T), Cond(G, SqrtNormal(mean_new, R_xy.T))
 
-    def parametrize_conditional(x: jax.Array, cond: Cond):
+    def conditional_parametrize(x: jax.Array, cond: Cond):
         return SqrtNormal(cond.A @ x + cond.noise.mean, cond.noise.cholesky)
 
     def rv_to_mvnorm(rv: SqrtNormal):
@@ -79,13 +77,13 @@ def impl_square_root() -> Impl:
         raise NotImplementedError
 
     return Impl(
-        rv_initialize=rv_initialize,
+        rv_from_mvnorm=rv_from_mvnorm,
         rv_to_mvnorm=rv_to_mvnorm,
         rv_sample=not_yet,
         rv_fixedpoint_select=not_yet,
         rv_fixedpoint_augment=not_yet,
-        dynamics_fixedpoint=not_yet,
-        parametrize_conditional=parametrize_conditional,
+        dynamics_fixedpoint_augment=not_yet,
+        conditional_parametrize=conditional_parametrize,
         conditional_merge=not_yet,
         marginalize=marginalize,
         bayes_update=bayes_update,
@@ -125,7 +123,7 @@ def impl_conventional() -> Impl:
         base = jax.random.normal(key, shape=rv.mean.shape, dtype=rv.mean.dtype)
         return rv.mean + jnp.linalg.cholesky(rv.cov) @ base
 
-    def parametrize_conditional(x: jax.Array, /, cond: Cond) -> Normal:
+    def conditional_parametrize(x: jax.Array, /, cond: Cond) -> Normal:
         return Normal(cond.A @ x + cond.noise.mean, cond.noise.cov)
 
     def marginalize(rv: Normal, /, cond: Cond) -> Normal:
@@ -154,7 +152,7 @@ def impl_conventional() -> Impl:
         n = len(mean) // 2
         return Normal(mean[n:], cov[n:, n:])
 
-    def dynamics_fixedpoint(dynamics: Dynamics) -> Dynamics:
+    def dynamics_fixedpoint_augment(dynamics: Dynamics) -> Dynamics:
         # Augment latent dynamics
         A, (q, Q) = dynamics.latent
         A_ = jax.scipy.linalg.block_diag(A, jnp.eye(len(A)))
@@ -181,14 +179,14 @@ def impl_conventional() -> Impl:
 
     return Impl(
         rv_to_mvnorm=lambda rv: (rv.mean, rv.cov),
-        rv_initialize=lambda m, c: Normal(m, c),
+        rv_from_mvnorm=lambda m, c: Normal(m, c),
         rv_sample=rv_sample,
-        parametrize_conditional=parametrize_conditional,
+        conditional_parametrize=conditional_parametrize,
         marginalize=marginalize,
         bayes_update=bayes_update,
         rv_fixedpoint_augment=rv_fixedpoint_augment,
         rv_fixedpoint_select=rv_fixedpoint_select,
-        dynamics_fixedpoint=dynamics_fixedpoint,
+        dynamics_fixedpoint_augment=dynamics_fixedpoint_augment,
         conditional_merge=conditional_merge,
     )
 
@@ -203,7 +201,7 @@ class SSM(NamedTuple):
 
 def ssm_augment_fixedpoint(ssm: SSM, impl: Impl) -> SSM:
     init = impl.rv_fixedpoint_augment(ssm.init)
-    dynamics = jax.vmap(impl.dynamics_fixedpoint)(ssm.dynamics)
+    dynamics = jax.vmap(impl.dynamics_fixedpoint_augment)(ssm.dynamics)
     return SSM(init=init, dynamics=dynamics)
 
 
@@ -229,13 +227,13 @@ def ssm_car_tracking_velocity(ts, /, noise, diffusion, impl: Impl) -> SSM:
         r = jnp.kron(r_1d, one_d)
         R = jnp.kron(R_1d, eye_d)
 
-        rv_q = impl.rv_initialize(q, Q)
-        rv_r = impl.rv_initialize(r, R)
+        rv_q = impl.rv_from_mvnorm(q, Q)
+        rv_r = impl.rv_from_mvnorm(r, R)
         return Dynamics(latent=Cond(A, rv_q), observation=Cond(H, rv_r))
 
     m0 = jnp.zeros((4,))
     C0 = jnp.eye(4)
-    x0 = impl.rv_initialize(m0, C0)
+    x0 = impl.rv_from_mvnorm(m0, C0)
 
     return SSM(init=x0, dynamics=jax.vmap(transition)(jnp.diff(ts)))
 
@@ -245,11 +243,11 @@ def sequence_sample(key, x0: jax.Array, dynamics: Dynamics, impl: Impl):
         key_k, sample_k = x
 
         key_k, subkey_k = jax.random.split(key_k, num=2)
-        rv = impl.parametrize_conditional(sample_k, dynamics_k.latent)
+        rv = impl.conditional_parametrize(sample_k, dynamics_k.latent)
         sample_k = impl.rv_sample(subkey_k, rv)
 
         key_k, subkey_k = jax.random.split(key_k, num=2)
-        rv_obs = impl.parametrize_conditional(sample_k, dynamics_k.observation)
+        rv_obs = impl.conditional_parametrize(sample_k, dynamics_k.observation)
         sample_obs_k = impl.rv_sample(subkey_k, rv_obs)
         return (key_k, sample_k), (sample_k, sample_obs_k)
 
@@ -281,7 +279,7 @@ def estimate_filter_kalman(data: jax.Array, ssm: SSM, *, impl: Impl):
 
         # Update
         _rv, cond = impl.bayes_update(state_kplus, model_k.observation)
-        state_new = impl.parametrize_conditional(y_k, cond)
+        state_new = impl.conditional_parametrize(y_k, cond)
         return state_new, ()
 
     x0 = ssm.init
@@ -299,7 +297,7 @@ def estimate_smoother_rts(data: jax.Array, ssm: SSM, *, impl: Impl):
 
         # Update
         _rv, gain = impl.bayes_update(state_kplus, model_k.observation)
-        state_new = impl.parametrize_conditional(y_k, gain)
+        state_new = impl.conditional_parametrize(y_k, gain)
         return state_new, (state_new, cond)
 
     x0 = ssm.init
@@ -321,7 +319,7 @@ def estimate_fixedpoint(data: jax.Array, ssm: SSM, *, impl: Impl):
 
         # Update
         _rv, gain = impl.bayes_update(state_kplus, model_k.observation)
-        state_new = impl.parametrize_conditional(y_k, gain)
+        state_new = impl.conditional_parametrize(y_k, gain)
         return (state_new, backward), ()
 
     x0 = ssm.init
