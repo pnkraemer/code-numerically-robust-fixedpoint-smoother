@@ -51,9 +51,9 @@ def impl_square_root() -> Impl:
     def marginalize(rv: SqrtNormal, cond: Cond):
         mean = cond.A @ rv.mean
 
-        L_AC = rv.cholesky.T @ cond.A.T
-        L_C = cond.noise.cholesky.T
-        cholesky_marg_T = jnp.concatenate([L_AC, L_C], axis=0)
+        R_X_F = rv.cholesky.T @ cond.A.T
+        R_X = cond.noise.cholesky.T
+        cholesky_marg_T = jnp.concatenate([R_X_F, R_X], axis=0)
         cholesky_T = jnp.linalg.qr(cholesky_marg_T, mode="r")
         return SqrtNormal(mean, cholesky_T.T)
 
@@ -73,13 +73,18 @@ def impl_square_root() -> Impl:
     def rv_to_mvnorm(rv: SqrtNormal):
         return rv.mean, rv.cholesky @ rv.cholesky.T
 
+    def rv_sample(key, /, rv: SqrtNormal) -> jax.Array:
+        base = jax.random.normal(key, shape=rv.mean.shape, dtype=rv.mean.dtype)
+        return rv.mean + rv.cholesky @ base
+
     def not_yet(*_a):
         raise NotImplementedError
+
 
     return Impl(
         rv_from_mvnorm=rv_from_mvnorm,
         rv_to_mvnorm=rv_to_mvnorm,
-        rv_sample=not_yet,
+        rv_sample=rv_sample,
         rv_fixedpoint_select=not_yet,
         rv_fixedpoint_augment=not_yet,
         dynamics_fixedpoint_augment=not_yet,
@@ -105,6 +110,7 @@ def _revert_conditional(R_X_F, R_X, R_YX):
     R12 = R[:d_out, d_out:]
 
     # Implements G = R12.T @ np.linalg.inv(R_Y.T) in clever:
+    # G = R12.T @ jnp.linalg.inv(R_Y.T)
     G = jax.scipy.linalg.solve_triangular(R_Y, R12, lower=False).T
 
     # ~R_{X \mid Y}
