@@ -1,5 +1,6 @@
 """FPX: Fixed-point smoothing in JAX."""
 
+import functools
 import dataclasses
 import jax.numpy as jnp
 import jax
@@ -25,7 +26,7 @@ class Dynamics(NamedTuple):
     observation: Cond
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class Impl(Generic[T]):
     """State-space model implementation."""
 
@@ -248,12 +249,12 @@ def ssm_augment_fixedpoint(ssm: SSM, impl: Impl) -> SSM:
     return SSM(init=init, dynamics=dynamics)
 
 
-def ssm_car_tracking_velocity(ts, /, noise, diffusion, impl: Impl) -> SSM:
+def ssm_car_tracking_velocity(ts, /, noise, diffusion, impl: Impl, dim: int = 2) -> SSM:
     """Construct a Wiener-velocity car-tracking model."""
 
     def transition(dt) -> Dynamics:
-        eye_d = jnp.eye(2)
-        one_d = jnp.ones((2,))
+        eye_d = jnp.eye(dim)
+        one_d = jnp.ones((dim,))
 
         A_1d = jnp.asarray([[1.0, dt], [0, 1.0]])
         q_1d = jnp.asarray([0.0, 0.0])
@@ -274,8 +275,8 @@ def ssm_car_tracking_velocity(ts, /, noise, diffusion, impl: Impl) -> SSM:
         rv_r = impl.rv_from_mvnorm(r, R)
         return Dynamics(latent=Cond(A, rv_q), observation=Cond(H, rv_r))
 
-    m0 = jnp.zeros((4,))
-    C0 = jnp.eye(4)
+    m0 = jnp.zeros((2 * dim,))
+    C0 = jnp.eye(2 * dim)
     x0 = impl.rv_from_mvnorm(m0, C0)
 
     return SSM(init=x0, dynamics=jax.vmap(transition)(jnp.diff(ts)))
@@ -312,6 +313,7 @@ def sequence_marginalize(init, cond: Cond, impl: Impl, reverse: bool):
 #  because it saves the initialisation step in all algorithm boxes!
 
 
+@functools.partial(jax.jit, static_argnames=["impl"])
 def estimate_filter_kalman(data: jax.Array, ssm: SSM, *, impl: Impl):
     def step_fun(state_k: T, inputs: tuple[jax.Array, Dynamics]) -> tuple[T, Any]:
         # Read
@@ -330,6 +332,7 @@ def estimate_filter_kalman(data: jax.Array, ssm: SSM, *, impl: Impl):
     return solution, {}
 
 
+@functools.partial(jax.jit, static_argnames=["impl"])
 def estimate_smoother_rts(data: jax.Array, ssm: SSM, *, impl: Impl):
     def step_fun(state_k: T, inputs: tuple[jax.Array, Dynamics]) -> tuple[T, Any]:
         # Read
@@ -350,6 +353,7 @@ def estimate_smoother_rts(data: jax.Array, ssm: SSM, *, impl: Impl):
     return (solution, conds), {"filter_distributions": filterdists}
 
 
+@functools.partial(jax.jit, static_argnames=["impl"])
 def estimate_fixedpoint(data: jax.Array, ssm: SSM, *, impl: Impl):
     def step_fun(state_k, inputs: tuple[jax.Array, Dynamics]) -> tuple:
         # Read
@@ -372,6 +376,7 @@ def estimate_fixedpoint(data: jax.Array, ssm: SSM, *, impl: Impl):
     return impl.marginalize(rv, cond), {}
 
 
+@functools.partial(jax.jit, static_argnames=["impl"])
 def estimate_fixedpoint_via_filter(data: jax.Array, ssm: SSM, *, impl: Impl):
     ssm_augment = ssm_augment_fixedpoint(ssm, impl=impl)
     terminal_filter, aux = estimate_filter_kalman(data, ssm_augment, impl=impl)
@@ -379,6 +384,7 @@ def estimate_fixedpoint_via_filter(data: jax.Array, ssm: SSM, *, impl: Impl):
     return rv_reduced, {}
 
 
+@functools.partial(jax.jit, static_argnames=["impl"])
 def estimate_fixedpoint_via_rts(data: jax.Array, ssm: SSM, *, impl: Impl):
     (terminal, conds), aux = estimate_smoother_rts(data, ssm, impl=impl)
     marginals = sequence_marginalize(terminal, conds, impl=impl, reverse=True)

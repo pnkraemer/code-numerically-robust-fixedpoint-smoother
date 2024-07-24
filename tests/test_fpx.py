@@ -164,7 +164,6 @@ def test_square_root_parametrisation_matches_conventional_parametrisation_for_fi
         assert jnp.allclose(x1, x2)
 
 
-
 # todo: use our own allclose which depends on the floating-point accuracy?
 
 
