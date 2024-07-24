@@ -12,24 +12,28 @@ def case_ssm_conventional():
 
 
 @pytest_cases.parametrize_with_cases("ssm", cases=".")
-def test_filter_estimates_trajectory(ssm):
-    ts = jnp.linspace(0, 1)
+def test_filter_estimates_trajectory_accurately(ssm):
 
+    # Set up a test problem
+    ts = jnp.linspace(0, 1)
     init, model = fpx.model_car_tracking_velocity(
         ts, noise=1e-4, diffusion=1.0, ssm=ssm
     )
 
+    # Create some data
     key = jax.random.PRNGKey(seed=1)
-
     key, subkey = jax.random.split(key, num=2)
     x0 = ssm.sample(subkey, init)
-
     _, (latent, data) = fpx.sample(key, x0, model, ssm=ssm)
     assert latent.shape == (len(ts) - 1, 4)
     assert data.shape == (len(ts) - 1, 2)
 
+    # Run a Kalman filter
     filter_kalman = fpx.alg_filter_kalman(ssm=ssm)
     _, (mean, _cov) = fpx.estimate_state(data, init, model, algorithm=filter_kalman)
+
+    # Assert that the error's magnitude is of the same order
+    # as the observation noise
     assert rmse(mean[:, :2], latent[:, :2]) < 1e-3
 
 
