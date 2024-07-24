@@ -7,20 +7,4 @@ plugins:
       handlers:
         python:
           paths: [src]  # search packages in the src folder
-        options:
-          show_root_heading: true
-          show_root_toc_entry: true
-          show_root_full_path: true
-          show_root_members_full_path: true
-          show_object_full_path: true
-          show_category_heading: false
-          docstring_style: numpy
-          show_if_no_docstring: true
-          members_order: alphabetical
-          annotations_path: brief
-          show_signature: true
-          show_signature_annotations: true
-          separate_signature: false
-          docstring_section_style: list
-          show_source: true
 nav: [index.md]
