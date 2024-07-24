@@ -8,8 +8,8 @@ from typing import Callable
 
 @dataclasses.dataclass
 class SSM:
-    init_rv: Callable
-    sample: Callable
+    rv_initialize: Callable
+    rv_sample: Callable
     parametrize_conditional: Callable
     marginalize: Callable
     bayes_update: Callable
@@ -41,8 +41,8 @@ def ssm_conventional() -> SSM:
         return mean_new, cov_new
 
     return SSM(
-        init_rv=lambda *a: a,
-        sample=compute_sample,
+        rv_initialize=lambda *a: a,
+        rv_sample=compute_sample,
         parametrize_conditional=parametrize_conditional,
         marginalize=marginalize,
         bayes_update=bayes_update,
@@ -52,10 +52,10 @@ def ssm_conventional() -> SSM:
 def ssm_square_root() -> SSM:
     """Construct a state-space model in square-root form."""
 
-    def init_rv(m, C):
+    def rv_initialize(m, C):
         return m, jnp.linalg.cholesky(C)
 
-    def compute_sample(key, rv):
+    def rv_sample(key, rv):
         mean, cholesky = rv
         base = jax.random.normal(key, shape=mean.shape, dtype=mean.dtype)
         return mean + cholesky @ base
@@ -68,8 +68,8 @@ def ssm_square_root() -> SSM:
         raise NotImplementedError
 
     return SSM(
-        init_rv=init_rv,
-        sample=compute_sample,
+        rv_initialize=rv_initialize,
+        rv_sample=rv_sample,
         parametrize_conditional=parametrize_conditional,
         bayes_update=not_yet,
         marginalize=not_yet,
@@ -98,29 +98,29 @@ def model_car_tracking_velocity(ts, /, noise, diffusion, *, ssm: SSM):
         r = jnp.kron(r_1d, one_d)
         R = jnp.kron(R_1d, eye_d)
 
-        rv_q = ssm.init_rv(q, Q)
-        rv_r = ssm.init_rv(r, R)
+        rv_q = ssm.rv_initialize(q, Q)
+        rv_r = ssm.rv_initialize(r, R)
         return (A, rv_q), (H, rv_r)
 
     m0 = jnp.zeros((4,))
     C0 = jnp.eye(4)
-    x0 = ssm.init_rv(m0, C0)
+    x0 = ssm.rv_initialize(m0, C0)
 
     return x0, jax.vmap(transition)(jnp.diff(ts))
 
 
-def sample(key: jax.random.PRNGKey, x0: jax.Array, model, *, ssm: SSM):
+def sample_sequence(key: jax.random.PRNGKey, x0: jax.Array, model, *, ssm: SSM):
     def scan_fun(x, model_k):
         key_k, sample_k = x
         model_prior, model_obs = model_k
 
         key_k, subkey_k = jax.random.split(key_k, num=2)
         rv = ssm.parametrize_conditional(sample_k, model_prior)
-        sample_k = ssm.sample(subkey_k, rv)
+        sample_k = ssm.rv_sample(subkey_k, rv)
 
         key_k, subkey_k = jax.random.split(key_k, num=2)
         rv_obs = ssm.parametrize_conditional(sample_k, model_obs)
-        sample_obs_k = ssm.sample(subkey_k, rv_obs)
+        sample_obs_k = ssm.rv_sample(subkey_k, rv_obs)
         return (key_k, sample_k), (sample_k, sample_obs_k)
 
     return jax.lax.scan(scan_fun, xs=model, init=(key, x0))
