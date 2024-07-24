@@ -3,24 +3,34 @@
 import dataclasses
 import jax.numpy as jnp
 import jax
-from typing import Callable, NamedTuple, Any
+from typing import Callable, NamedTuple, Any, TypeVar, Generic
+
+
+T = TypeVar("T")
+
+
+class GaussCond(NamedTuple):
+    """Affine Gaussian conditional distributions."""
+
+    transition: jax.Array
+    noise: Any
 
 
 @dataclasses.dataclass
-class Impl:
+class Impl(Generic[T]):
     """State-space model implementation."""
 
-    rv_initialize: Callable
-    rv_sample: Callable
-    parametrize_conditional: Callable
-    marginalize: Callable
-    bayes_update: Callable
+    rv_initialize: Callable[[jax.Array, jax.Array], T]
+    rv_sample: Callable[[Any, T], jax.Array]
+    parametrize_conditional: Callable[[jax.Array, GaussCond], T]
+    marginalize: Callable[[T, GaussCond], T]
+    bayes_update: Callable[[T, GaussCond], tuple[T, GaussCond]]
 
 
 def impl_conventional() -> Impl:
     """Construct a state-space model implementation."""
 
-    def compute_sample(key, rv):
+    def rv_sample(key, rv):
         mean, cov = rv
         base = jax.random.normal(key, shape=mean.shape, dtype=mean.dtype)
         return mean + jnp.linalg.cholesky(cov) @ base
@@ -33,63 +43,32 @@ def impl_conventional() -> Impl:
         A, (mean, cov) = ssm
         return A @ rv[0] + mean, A @ rv[1] @ A.T + cov
 
-    # todo: return the marginal distributions, too, (so we can use the same function for smoothing)
-    def bayes_update(rv, ssm, data):
+    def bayes_update(rv, ssm):
         H, (r, R) = ssm
-        mean, cov = rv
-        gain = cov @ H.T @ jnp.linalg.inv(H @ cov @ H.T + R)
-        mean_new = mean - gain @ (H @ mean + r - data)
-        cov_new = cov - gain @ (H @ cov @ H.T + R) @ gain.T
-        return mean_new, cov_new
+        m, C = rv
+
+        s = H @ m + r
+        S = H @ C @ H.T + R
+
+        gain = C @ H.T @ jnp.linalg.inv(S)
+        mean_new = m - gain @ s
+        cov_new = C - gain @ S @ gain.T
+        return (s, S), GaussCond(gain, (mean_new, cov_new))
 
     return Impl(
-        rv_initialize=lambda *a: a,
-        rv_sample=compute_sample,
+        rv_initialize=lambda m, c: (m, c),
+        rv_sample=rv_sample,
         parametrize_conditional=parametrize_conditional,
         marginalize=marginalize,
         bayes_update=bayes_update,
     )
 
 
-def impl_square_root() -> Impl:
-    """Construct a state-space ssm implementation using square-root form."""
-
-    def rv_initialize(m, C):
-        return m, jnp.linalg.cholesky(C)
-
-    def rv_sample(key, rv):
-        mean, cholesky = rv
-        base = jax.random.normal(key, shape=mean.shape, dtype=mean.dtype)
-        return mean + cholesky @ base
-
-    def parametrize_conditional(x, /, ssm):
-        A, (mean, cholesky) = ssm
-        return A @ x + mean, cholesky
-
-    def not_yet(*_a):
-        raise NotImplementedError
-
-    return Impl(
-        rv_initialize=rv_initialize,
-        rv_sample=rv_sample,
-        parametrize_conditional=parametrize_conditional,
-        bayes_update=not_yet,
-        marginalize=not_yet,
-    )
-
-
-class GaussCondAffine(NamedTuple):
-    """Affine Gaussian conditional distributions."""
-
-    transition: jax.Array
-    noise: Any
-
-
 class Dynamics(NamedTuple):
     """State-space model dynamics."""
 
-    latent: GaussCondAffine
-    observation: GaussCondAffine
+    latent: GaussCond
+    observation: GaussCond
 
 
 class SSM(NamedTuple):
@@ -123,9 +102,7 @@ def ssm_car_tracking_velocity(ts, /, noise, diffusion, *, impl: Impl) -> SSM:
 
         rv_q = impl.rv_initialize(q, Q)
         rv_r = impl.rv_initialize(r, R)
-        return Dynamics(
-            latent=GaussCondAffine(A, rv_q), observation=GaussCondAffine(H, rv_r)
-        )
+        return Dynamics(latent=GaussCond(A, rv_q), observation=GaussCond(H, rv_r))
 
     m0 = jnp.zeros((4,))
     C0 = jnp.eye(4)
@@ -152,34 +129,37 @@ def sample_sequence(key, x0: jax.Array, ssm: SSM, *, impl: Impl):
 
 
 @dataclasses.dataclass
-class Algorithm:
-    init: Callable
-    predict: Callable
-    update: Callable
-    extract: Callable
+class Algorithm(Generic[T]):
+    init: Callable[[Any], T]
+    predict: Callable[[T, GaussCond], T]
+    update: Callable[[T, GaussCond, jax.Array], T]
+    extract: Callable[[T], Any]
 
 
 def alg_filter_kalman(impl: Impl) -> Algorithm:
+    def update(rv, model, data):
+        _rv, cond = impl.bayes_update(rv, model)
+        return impl.parametrize_conditional(data, cond)
+
     return Algorithm(
         init=lambda x: x,
         extract=lambda x: x,
         predict=impl.marginalize,
-        update=impl.bayes_update,
+        update=update,
     )
 
 
 def estimate_state(data: jax.Array, init, ssm: SSM, algorithm: Algorithm):
-    def step_fun(state, inputs):
+    def step_fun(state_k: T, inputs: tuple[jax.Array, Dynamics]) -> tuple[T, Any]:
         # Read
-        (y_k, (ssm_prior, ssm_obs)) = inputs
-        x_k = state
+        (y_k, model_k) = inputs
 
         # Predict
-        x_kplus = algorithm.predict(x_k, ssm_prior)
+        state_kplus = algorithm.predict(state_k, model_k.latent)
 
         # Update
-        x_new = algorithm.update(x_kplus, ssm_obs, y_k)
-        return x_new, algorithm.extract(x_new)
+        state_new = algorithm.update(state_kplus, model_k.observation, y_k)
+        return state_new, algorithm.extract(state_new)
 
     x0 = algorithm.init(init)
     return jax.lax.scan(step_fun, xs=(data, ssm), init=x0)
