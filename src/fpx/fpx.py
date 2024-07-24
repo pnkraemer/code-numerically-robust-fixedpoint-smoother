@@ -282,6 +282,49 @@ def ssm_car_tracking_velocity(ts, /, noise, diffusion, impl: Impl, dim: int = 2)
     return SSM(init=x0, dynamics=jax.vmap(transition)(jnp.diff(ts)))
 
 
+def ssm_car_tracking_acceleration(
+    ts, /, noise, diffusion, impl: Impl, dim: int = 2
+) -> SSM:
+    """Construct a Wiener-acceleration car-tracking model."""
+
+    def transition(dt) -> Dynamics:
+        eye_d = jnp.eye(dim)
+        one_d = jnp.ones((dim,))
+
+        A_1d = jnp.asarray([[1.0, dt, dt**2 / 2], [0, 1.0, dt], [0, 0, 1.0]])
+        q_1d = jnp.asarray([0.0, 0.0, 0.0])
+        Q_1d = diffusion**2 * jnp.asarray(
+            [
+                [dt**5 / 20, dt**4 / 8, dt**3 / 6],
+                [dt**4 / 8, dt**3 / 3, dt**2 / 2],
+                [dt**3 / 3, dt**2 / 2, dt],
+            ]
+        )
+        Q_1d += 1e-8 * jnp.eye(len(Q_1d))
+
+        H_1d = jnp.asarray([[1.0, 0.0, 0.0]])
+        r_1d = jnp.asarray(0.0)
+        R_1d = noise**2 * jnp.asarray(1.0)
+
+        A = jnp.kron(A_1d, eye_d)
+        q = jnp.kron(q_1d, one_d)
+        Q = jnp.kron(Q_1d, eye_d)
+
+        H = jnp.kron(H_1d, eye_d)
+        r = jnp.kron(r_1d, one_d)
+        R = jnp.kron(R_1d, eye_d)
+
+        rv_q = impl.rv_from_mvnorm(q, Q)
+        rv_r = impl.rv_from_mvnorm(r, R)
+        return Dynamics(latent=Cond(A, rv_q), observation=Cond(H, rv_r))
+
+    m0 = jnp.zeros((3 * dim,))
+    C0 = jnp.eye(3 * dim)
+    x0 = impl.rv_from_mvnorm(m0, C0)
+    dynamics = jax.vmap(transition)(jnp.diff(ts))
+    return SSM(init=x0, dynamics=dynamics)
+
+
 def sequence_sample(key, x0: jax.Array, dynamics: Dynamics, impl: Impl):
     def scan_fun(x, dynamics_k: Dynamics):
         key_k, sample_k = x
