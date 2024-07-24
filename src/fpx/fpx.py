@@ -16,12 +16,24 @@ class Cond(NamedTuple):
     noise: Any
 
 
+class Dynamics(NamedTuple):
+    """State-space model dynamics."""
+
+    # todo: make this type generic (and register as pytree)
+
+    latent: Cond
+    observation: Cond
+
+
 @dataclasses.dataclass
 class Impl(Generic[T]):
     """State-space model implementation."""
 
     rv_initialize: Callable[[jax.Array, jax.Array], T]
     rv_sample: Callable[[Any, T], jax.Array]
+    rv_fixedpoint_augment: Callable[[T], T]
+    rv_fixedpoint_select: Callable[[T], T]
+    dynamics_fixedpoint: Callable[[Dynamics], Dynamics]
     parametrize_conditional: Callable[[jax.Array, Cond], T]
     marginalize: Callable[[T, Cond], T]
     bayes_update: Callable[[T, Cond], tuple[T, Cond]]
@@ -55,27 +67,58 @@ def impl_conventional() -> Impl:
         cov_new = rv.cov - gain @ S @ gain.T
         return Normal(s, S), Cond(gain, Normal(mean_new, cov_new))
 
+    def rv_fixedpoint_augment(rv: Normal) -> Normal:
+        mean, cov = rv
+        mean_augmented = jnp.concatenate([mean, mean], axis=0)
+        cov_augmented_row = jnp.concatenate([cov, cov], axis=1)
+        cov_augmented = jnp.concatenate([cov_augmented_row, cov_augmented_row], axis=0)
+        return Normal(mean_augmented, cov_augmented)
+
+    def rv_fixedpoint_select(rv: Normal) -> Normal:
+        mean, cov = rv
+        n = len(mean) // 2
+        return Normal(mean[n:], cov[n:, n:])
+
+    def dynamics_fixedpoint(dynamics: Dynamics) -> Dynamics:
+        # Augment latent dynamics
+        A, (q, Q) = dynamics.latent
+        A_ = jax.scipy.linalg.block_diag(A, jnp.eye(len(A)))
+        q_ = jnp.concatenate([q, jnp.zeros_like(q)], axis=0)
+        Q_ = jax.scipy.linalg.block_diag(Q, jnp.zeros_like(Q))
+        latent = Cond(A_, Normal(q_, Q_))
+
+        # Augment observations
+        H, cond = dynamics.observation
+        H_ = jnp.concatenate([H, jnp.zeros_like(H)], axis=1)
+        observation = Cond(H_, cond)
+
+        # Combine and return
+        return Dynamics(latent=latent, observation=observation)
+
     return Impl(
         rv_initialize=lambda m, c: Normal(m, c),
         rv_sample=rv_sample,
         parametrize_conditional=parametrize_conditional,
         marginalize=marginalize,
         bayes_update=bayes_update,
+        rv_fixedpoint_augment=rv_fixedpoint_augment,
+        rv_fixedpoint_select=rv_fixedpoint_select,
+        dynamics_fixedpoint=dynamics_fixedpoint,
     )
-
-
-class Dynamics(NamedTuple):
-    """State-space model dynamics."""
-
-    latent: Cond
-    observation: Cond
 
 
 class SSM(NamedTuple):
     """State-space model."""
 
+    # todo: make this type generic (and register as pytree)
     init: Any
     dynamics: Dynamics
+
+
+def ssm_augment_fixedpoint(ssm: SSM, impl: Impl) -> SSM:
+    init = impl.rv_fixedpoint_augment(ssm.init)
+    dynamics = jax.vmap(impl.dynamics_fixedpoint)(ssm.dynamics)
+    return SSM(init=init, dynamics=dynamics)
 
 
 def ssm_car_tracking_velocity(ts, /, noise, diffusion, impl: Impl) -> SSM:
@@ -141,6 +184,20 @@ class Algorithm(Generic[T]):
     predict: Callable[[T, Cond], T]
     update: Callable[[T, Cond, jax.Array], T]
     extract: Callable[[T], Any]
+
+
+def alg_fixedpoint_via_filter(algorithm_filter: Algorithm, impl: Impl) -> Algorithm:
+    def extract(solution):
+        rv_final, aux = algorithm_filter.extract(solution)
+        rv_reduced = impl.rv_fixedpoint_select(rv_final)
+        return rv_reduced, {"rv_final": rv_final, "filter_aux": aux}
+
+    return Algorithm(
+        init=algorithm_filter.init,
+        predict=algorithm_filter.predict,
+        update=algorithm_filter.update,
+        extract=extract,
+    )
 
 
 def alg_filter_kalman(impl: Impl) -> Algorithm:

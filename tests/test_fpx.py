@@ -73,11 +73,44 @@ def test_smoother_more_accurate_than_filter(impl):
 
     # Assert that the smoother is better than the filter
     assert rmse(m_s, y) < 0.9 * rmse(m_f, y)  # use '0.9' to increase the significance
-    assert False
 
 
-# todo: implement a fixed-point smoother that matches the output of the smoother
-# todo: implement state-augmentation for the filter that matches the fixed-point smoother
+@pytest_cases.parametrize_with_cases("impl", cases=".")
+def test_state_augmented_filter_matches_smoother_at_initial_state(impl):
+    # Set up a test problem
+    ts = jnp.linspace(0, 1)
+    ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl)
+
+    # Create some data
+    key = jax.random.PRNGKey(seed=1)
+    key, subkey = jax.random.split(key, num=2)
+    x0 = impl.rv_sample(subkey, ssm.init)
+    _, (latent, data) = fpx.sequence_sample(key, x0, ssm.dynamics, impl=impl)
+    assert latent.shape == (len(ts) - 1, 4)
+    assert data.shape == (len(ts) - 1, 2)
+
+    # Run an RTS smoother
+    smoother_rts = fpx.alg_smoother_rts(impl=impl)
+    posterior, _aux = fpx.estimate_state(data, ssm, algorithm=smoother_rts)
+    initial_rts, _ = fpx.sequence_marginalize(*posterior, impl=impl, reverse=True)
+
+    # Run a fixedpoint-smoother via state-augmented filtering
+    filter_kalman = fpx.alg_filter_kalman(impl=impl)
+    fixedpoint_augment = fpx.alg_fixedpoint_via_filter(
+        algorithm_filter=filter_kalman, impl=impl
+    )
+    ssm_augment = fpx.ssm_augment_fixedpoint(ssm, impl=impl)
+    initial_fps, aux = fpx.estimate_state(
+        data, ssm_augment, algorithm=fixedpoint_augment
+    )
+
+    # Check that all leaves match
+    for x1, x2 in zip(jax.tree.leaves(initial_fps), jax.tree.leaves(initial_rts)):
+        assert jnp.allclose(x1, x2, atol=1e-4)
+
+
+# todo: implement state-augmentation for the filter that matches the fixed-point smoother at the initial state
+# todo: implement a fixed-point smoother that matches the state-augmented filter
 # todo: implement all these methods in sqrt-form
 
 
