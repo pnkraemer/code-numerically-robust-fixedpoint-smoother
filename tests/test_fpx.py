@@ -124,7 +124,7 @@ def test_fixedpoint_smoother_matches_state_augmented_filter(impl):
 
     # Run a fixedpoint-smoother via state-augmented filtering
     # and via marginalising over an RTS solution
-    initial_rts, _aux = fpx.estimate_fixedpoint_via_rts(data, ssm, impl=impl)
+    initial_rts, _aux = fpx.estimate_fixedpoint_via_filter(data, ssm, impl=impl)
     initial_fps, _aux = fpx.estimate_fixedpoint(data, ssm, impl=impl)
 
     # Check that all leaves match
@@ -134,7 +134,7 @@ def test_fixedpoint_smoother_matches_state_augmented_filter(impl):
         assert jnp.allclose(x1, x2, atol=1e-4)
 
 
-def test_square_root_parametrisation_matches_conventional_parametrisation():
+def test_square_root_parametrisation_matches_conventional_parametrisation_for_filter():
     impl_conv = fpx.impl_conventional()
     ts = jnp.linspace(0, 1, num=100)
     ssm_conv = fpx.ssm_car_tracking_velocity(
@@ -165,7 +165,7 @@ def test_square_root_parametrisation_matches_conventional_parametrisation():
 
 
 
-# todo: use our own allclose which depends on the floating-point accuracy
+# todo: use our own allclose which depends on the floating-point accuracy?
 
 
 def rmse(a, b):
