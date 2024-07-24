@@ -35,6 +35,7 @@ class Impl(Generic[T]):
     rv_fixedpoint_select: Callable[[T], T]
     dynamics_fixedpoint: Callable[[Dynamics], Dynamics]
     parametrize_conditional: Callable[[jax.Array, Cond], T]
+    conditional_merge: Callable[[Cond, Cond], Cond]
     marginalize: Callable[[T, Cond], T]
     bayes_update: Callable[[T, Cond], tuple[T, Cond]]
 
@@ -95,6 +96,15 @@ def impl_conventional() -> Impl:
         # Combine and return
         return Dynamics(latent=latent, observation=observation)
 
+    def conditional_merge(cond1: Cond, cond2: Cond) -> Cond:
+        A1, (m1, C1) = cond1
+        A2, (m2, C2) = cond2
+
+        A = A1 @ A2
+        m = A1 @ m2 + m1
+        C = A1 @ C2 @ A1.T + C1
+        return Cond(A, Normal(m, C))
+
     return Impl(
         rv_initialize=lambda m, c: Normal(m, c),
         rv_sample=rv_sample,
@@ -104,6 +114,7 @@ def impl_conventional() -> Impl:
         rv_fixedpoint_augment=rv_fixedpoint_augment,
         rv_fixedpoint_select=rv_fixedpoint_select,
         dynamics_fixedpoint=dynamics_fixedpoint,
+        conditional_merge=conditional_merge,
     )
 
 
@@ -221,6 +232,28 @@ def estimate_smoother_rts(data: jax.Array, ssm: SSM, *, impl: Impl):
         step_fun, xs=(data, ssm.dynamics), init=x0
     )
     return (solution, conds), {"filter_distributions": filterdists}
+
+
+def estimate_fixedpoint(data: jax.Array, ssm: SSM, *, impl: Impl):
+    def step_fun(state_k, inputs: tuple[jax.Array, Dynamics]) -> tuple:
+        # Read
+        (y_k, model_k) = inputs
+
+        # Predict
+        state_rv, state_backward = state_k
+        state_kplus, backward = impl.bayes_update(state_rv, model_k.latent)
+        backward = impl.conditional_merge(state_backward, backward)
+
+        # Update
+        _rv, gain = impl.bayes_update(state_kplus, model_k.observation)
+        state_new = impl.parametrize_conditional(y_k, gain)
+        return (state_new, backward), ()
+
+    x0 = ssm.init
+    cond = Cond(jnp.eye(len(x0.mean)), jax.tree.map(jnp.zeros_like, x0))
+    init, xs = (x0, cond), (data, ssm.dynamics)
+    (rv, cond), _ = jax.lax.scan(step_fun, xs=xs, init=init)
+    return impl.marginalize(rv, cond), {}
 
 
 def estimate_fixedpoint_via_filter(data: jax.Array, ssm: SSM, *, impl: Impl):

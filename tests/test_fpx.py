@@ -77,7 +77,7 @@ def test_smoother_more_accurate_than_filter(impl):
 
 
 @pytest_cases.parametrize_with_cases("impl", cases=".")
-def test_state_augmented_filter_matches_smoother_at_initial_state(impl):
+def test_state_augmented_filter_matches_rts_smoother_at_initial_state(impl):
     # Set up a test problem
     ts = jnp.linspace(0, 1)
     ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl)
@@ -94,6 +94,30 @@ def test_state_augmented_filter_matches_smoother_at_initial_state(impl):
     # and via marginalising over an RTS solution
     initial_rts, _aux = fpx.estimate_fixedpoint_via_rts(data, ssm, impl=impl)
     initial_fps, _aux = fpx.estimate_fixedpoint_via_filter(data, ssm, impl=impl)
+
+    # Check that all leaves match
+    for x1, x2 in zip(jax.tree.leaves(initial_fps), jax.tree.leaves(initial_rts)):
+        assert jnp.allclose(x1, x2, atol=1e-4)
+
+
+@pytest_cases.parametrize_with_cases("impl", cases=".")
+def test_fixedpoint_smoother_matches_state_augmented_filter(impl):
+    # Set up a test problem
+    ts = jnp.linspace(0, 1)
+    ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl)
+
+    # Create some data
+    key = jax.random.PRNGKey(seed=1)
+    key, subkey = jax.random.split(key, num=2)
+    x0 = impl.rv_sample(subkey, ssm.init)
+    _, (latent, data) = fpx.sequence_sample(key, x0, ssm.dynamics, impl=impl)
+    assert latent.shape == (len(ts) - 1, 4)
+    assert data.shape == (len(ts) - 1, 2)
+
+    # Run a fixedpoint-smoother via state-augmented filtering
+    # and via marginalising over an RTS solution
+    initial_rts, _aux = fpx.estimate_fixedpoint_via_rts(data, ssm, impl=impl)
+    initial_fps, _aux = fpx.estimate_fixedpoint(data, ssm, impl=impl)
 
     # Check that all leaves match
     for x1, x2 in zip(jax.tree.leaves(initial_fps), jax.tree.leaves(initial_rts)):
