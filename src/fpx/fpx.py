@@ -141,15 +141,23 @@ def alg_filter_kalman(impl: Impl) -> Algorithm:
         _rv, cond = impl.bayes_update(rv, model)
         return impl.parametrize_conditional(data, cond)
 
+    def extract(solution):
+        rv_final, rv_intermediates = solution
+        return rv_final, {"intermediates": rv_intermediates}
+
     return Algorithm(
         init=lambda x: x,
-        extract=lambda x: x,
+        extract=extract,
         predict=impl.marginalize,
         update=update,
     )
 
 
-def estimate_state(data: jax.Array, init, ssm: SSM, algorithm: Algorithm):
+# todo: this code assumes $p(x_0 \mid y_{1:K})$,
+#  and we should use the same notation in the paper
+#  this explanation is superior,
+#  because it saves the initialisation step in all algorithm boxes!
+def estimate_state(data: jax.Array, ssm: SSM, algorithm: Algorithm):
     def step_fun(state_k: T, inputs: tuple[jax.Array, Dynamics]) -> tuple[T, Any]:
         # Read
         (y_k, model_k) = inputs
@@ -159,7 +167,8 @@ def estimate_state(data: jax.Array, init, ssm: SSM, algorithm: Algorithm):
 
         # Update
         state_new = algorithm.update(state_kplus, model_k.observation, y_k)
-        return state_new, algorithm.extract(state_new)
+        return state_new, state_new
 
-    x0 = algorithm.init(init)
-    return jax.lax.scan(step_fun, xs=(data, ssm), init=x0)
+    x0 = algorithm.init(ssm.init)
+    solution = jax.lax.scan(step_fun, xs=(data, ssm.dynamics), init=x0)
+    return algorithm.extract(solution)
