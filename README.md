@@ -22,6 +22,18 @@ which installs the source code plus all dependencies.
 - [ ] Square-root fixed-point smoother versus non-square-root fixed-point smoother
 - [ ] Parameter-estimation in boundary value problems via probabilistic numerics
 
+## Using the code
+
+Everything is contained in a single module.
+To use it, and after installation, import
+```python
+from fpx import fpx
+
+print(help(fpx))
+```
+and access all code via `fpx.*` ("fpx" stands for "fixed-point smoothing in JAX").
+Consult the test file in `tests/test_fpx.py` for examples.
+
 ## Working with the source
 
 After following the installation instructions above, the test-dependencies are installed.
