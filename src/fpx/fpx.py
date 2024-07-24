@@ -28,6 +28,7 @@ class Dynamics(NamedTuple):
 @dataclasses.dataclass
 class Impl(Generic[T]):
     """State-space model implementation."""
+
     rv_from_mvnorm: Callable[[jax.Array, jax.Array], T]
     rv_to_mvnorm: Callable[[T], tuple[jax.Array, jax.Array]]
     rv_sample: Callable[[Any, T], jax.Array]
@@ -48,8 +49,11 @@ def impl_square_root() -> Impl:
     def rv_from_mvnorm(m, c) -> SqrtNormal:
         return SqrtNormal(m, jnp.linalg.cholesky(c))
 
+    def rv_to_mvnorm(rv: SqrtNormal):
+        return rv.mean, rv.cholesky @ rv.cholesky.T
+
     def marginalize(rv: SqrtNormal, cond: Cond):
-        mean = cond.A @ rv.mean
+        mean = cond.A @ rv.mean + cond.noise.mean
 
         R_X_F = rv.cholesky.T @ cond.A.T
         R_X = cond.noise.cholesky.T
@@ -70,32 +74,65 @@ def impl_square_root() -> Impl:
     def conditional_parametrize(x: jax.Array, cond: Cond):
         return SqrtNormal(cond.A @ x + cond.noise.mean, cond.noise.cholesky)
 
-    def rv_to_mvnorm(rv: SqrtNormal):
-        return rv.mean, rv.cholesky @ rv.cholesky.T
-
     def rv_sample(key, /, rv: SqrtNormal) -> jax.Array:
         base = jax.random.normal(key, shape=rv.mean.shape, dtype=rv.mean.dtype)
         return rv.mean + rv.cholesky @ base
 
-    def not_yet(*_a):
-        raise NotImplementedError
+    def conditional_merge(cond1: Cond, cond2: Cond) -> Cond:
+        A1, (m1, C1) = cond1
+        A2, (m2, C2) = cond2
 
+        A = A1 @ A2
+        m = A1 @ m2 + m1
+        chol_T = jnp.linalg.qr(jnp.concatenate([C2.T @ A1.T, C1.T]), mode="r")
+        return Cond(A, SqrtNormal(m, chol_T.T))
+
+    def rv_fixedpoint_augment(rv: SqrtNormal) -> SqrtNormal:
+        mean, chol = rv
+        mean_augmented = jnp.concatenate([mean, mean], axis=0)
+        chol_augmented = jnp.block(
+            [[chol, jnp.zeros_like(chol)], [chol, jnp.zeros_like(chol)]]
+        )
+        return SqrtNormal(mean_augmented, chol_augmented)
+
+    def dynamics_fixedpoint_augment(dynamics: Dynamics) -> Dynamics:
+        # Augment latent dynamics
+        A, (q, Q) = dynamics.latent
+        A_ = jax.scipy.linalg.block_diag(A, jnp.eye(len(A)))
+        q_ = jnp.concatenate([q, jnp.zeros_like(q)], axis=0)
+        Q_ = jax.scipy.linalg.block_diag(Q, jnp.zeros_like(Q))
+        latent = Cond(A_, SqrtNormal(q_, Q_))
+
+        # Augment observations
+        H, cond = dynamics.observation
+        H_ = jnp.concatenate([H, jnp.zeros_like(H)], axis=1)
+        observation = Cond(H_, cond)
+
+        # Combine and return
+        return Dynamics(latent=latent, observation=observation)
+
+    def rv_fixedpoint_select(rv: SqrtNormal) -> SqrtNormal:
+        mean, cholesky = rv
+        n = len(mean) // 2
+        mean_new = mean[n:]
+        cholesky_new = jnp.linalg.qr(cholesky.T[:, n:], mode="r").T
+        return SqrtNormal(mean_new, cholesky_new)
 
     return Impl(
         rv_from_mvnorm=rv_from_mvnorm,
         rv_to_mvnorm=rv_to_mvnorm,
         rv_sample=rv_sample,
-        rv_fixedpoint_select=not_yet,
-        rv_fixedpoint_augment=not_yet,
-        dynamics_fixedpoint_augment=not_yet,
+        rv_fixedpoint_select=rv_fixedpoint_select,
+        rv_fixedpoint_augment=rv_fixedpoint_augment,
+        dynamics_fixedpoint_augment=dynamics_fixedpoint_augment,
         conditional_parametrize=conditional_parametrize,
-        conditional_merge=not_yet,
+        conditional_merge=conditional_merge,
         marginalize=marginalize,
         bayes_update=bayes_update,
     )
 
 
-def _revert_conditional(R_X_F, R_X, R_YX):
+def _revert_conditional(*, R_X_F, R_X, R_YX):
     # Taken from:
     # https://github.com/pnkraemer/probdiffeq/blob/main/probdiffeq/util/cholesky_util.py
 
@@ -141,7 +178,7 @@ def impl_conventional() -> Impl:
         s = cond.A @ rv.mean + cond.noise.mean
         S = cond.A @ rv.cov @ cond.A.T + cond.noise.cov
 
-        gain = rv.cov @ cond.A.T @ jnp.linalg.inv(S)
+        gain = jnp.linalg.solve(S.T, cond.A @ rv.cov).T
         mean_new = rv.mean - gain @ s
         cov_new = rv.cov - gain @ S @ gain.T
         return Normal(s, S), Cond(gain, Normal(mean_new, cov_new))

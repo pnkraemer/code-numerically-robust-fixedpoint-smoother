@@ -10,6 +10,7 @@ from fpx import fpx
 def case_impl_conventional():
     return fpx.impl_conventional()
 
+
 def case_impl_square_root():
     return fpx.impl_square_root()
 
@@ -39,7 +40,7 @@ def test_filter_estimates_trajectory_accurately(impl):
 @pytest_cases.parametrize_with_cases("impl", cases=".")
 def test_smoother_more_accurate_than_filter(impl):
     # Set up a test problem
-    ts = jnp.linspace(0, 1, num=11)
+    ts = jnp.linspace(0, 1, num=100)
     ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-1, diffusion=1.0, impl=impl)
 
     # Create some data
@@ -58,12 +59,9 @@ def test_smoother_more_accurate_than_filter(impl):
     marginals = fpx.sequence_marginalize(terminal, conds, impl=impl, reverse=True)
 
     # Assert that the final states of filter and smoother coincide
-    assert jax.tree.all(jax.tree.map(jnp.allclose, terminal, terminal_filter))
-    print("Data", latent[:-1])
-
-    print("Smoother", marginals[0])
-
-    print("Filter", aux["filter_distributions"][0][:-1])
+    t1 = impl.rv_to_mvnorm(terminal)
+    t2 = impl.rv_to_mvnorm(terminal_filter)
+    assert jax.tree.all(jax.tree.map(jnp.allclose, t1, t2))
 
     # Assert that the marginals make sense
     # Select the intermediate states of data, filter, and smoother
@@ -71,7 +69,7 @@ def test_smoother_more_accurate_than_filter(impl):
     # The smoother-solution does not include the terminal value
     # The filter-solution does not include the initial value
     # The data vectors match the filter solution
-    m_f = aux["filter_distributions"][0][:-1]
+    m_f = aux["filter_distributions"].mean[:-1]
     y = latent[:-1]
     m_s = marginals.mean[1:]
 
@@ -87,7 +85,7 @@ def test_smoother_more_accurate_than_filter(impl):
 @pytest_cases.parametrize_with_cases("impl", cases=".")
 def test_state_augmented_filter_matches_rts_smoother_at_initial_state(impl):
     # Set up a test problem
-    ts = jnp.linspace(0, 1, num=11)
+    ts = jnp.linspace(0, 1, num=100)
     ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl)
 
     # Create some data
@@ -104,6 +102,8 @@ def test_state_augmented_filter_matches_rts_smoother_at_initial_state(impl):
     initial_fps, _aux = fpx.estimate_fixedpoint_via_filter(data, ssm, impl=impl)
 
     # Check that all leaves match
+    initial_rts = impl.rv_to_mvnorm(initial_rts)
+    initial_fps = impl.rv_to_mvnorm(initial_fps)
     for x1, x2 in zip(jax.tree.leaves(initial_fps), jax.tree.leaves(initial_rts)):
         assert jnp.allclose(x1, x2, atol=1e-4)
 
@@ -111,7 +111,7 @@ def test_state_augmented_filter_matches_rts_smoother_at_initial_state(impl):
 @pytest_cases.parametrize_with_cases("impl", cases=".")
 def test_fixedpoint_smoother_matches_state_augmented_filter(impl):
     # Set up a test problem
-    ts = jnp.linspace(0, 1, num=11)
+    ts = jnp.linspace(0, 1, num=100)
     ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl)
 
     # Create some data
@@ -128,14 +128,18 @@ def test_fixedpoint_smoother_matches_state_augmented_filter(impl):
     initial_fps, _aux = fpx.estimate_fixedpoint(data, ssm, impl=impl)
 
     # Check that all leaves match
+    initial_rts = impl.rv_to_mvnorm(initial_rts)
+    initial_fps = impl.rv_to_mvnorm(initial_fps)
     for x1, x2 in zip(jax.tree.leaves(initial_fps), jax.tree.leaves(initial_rts)):
         assert jnp.allclose(x1, x2, atol=1e-4)
 
 
 def test_square_root_parametrisation_matches_conventional_parametrisation():
     impl_conv = fpx.impl_conventional()
-    ts = jnp.linspace(0, 1, num=11)
-    ssm_conv = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl_conv)
+    ts = jnp.linspace(0, 1, num=100)
+    ssm_conv = fpx.ssm_car_tracking_velocity(
+        ts, noise=1e-4, diffusion=1.0, impl=impl_conv
+    )
 
     # Sample using the conventional parametrisation
     key = jax.random.PRNGKey(seed=1)
@@ -145,11 +149,11 @@ def test_square_root_parametrisation_matches_conventional_parametrisation():
     assert latent.shape == (len(ts) - 1, 4)
     assert data.shape == (len(ts) - 1, 2)
 
-
     # Replicate with sqrt parametrisation
     impl_sqrt = fpx.impl_square_root()
-    ssm_sqrt = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl_sqrt)
-
+    ssm_sqrt = fpx.ssm_car_tracking_velocity(
+        ts, noise=1e-4, diffusion=1.0, impl=impl_sqrt
+    )
 
     rv_conv, _aux = fpx.estimate_filter_kalman(data, ssm_conv, impl=impl_conv)
     rv_sqrt, _aux = fpx.estimate_filter_kalman(data, ssm_sqrt, impl=impl_sqrt)
@@ -161,6 +165,72 @@ def test_square_root_parametrisation_matches_conventional_parametrisation():
 
 
 # todo: implement all these methods in sqrt-form
+
+
+def test_both_bayes_updates_match():
+    A = jnp.arange(9).reshape((3, 3))
+    C = A @ A.T + jnp.eye(3)
+    m = A[0, :]
+
+    impl_sqrt = fpx.impl_conventional()
+    rv_sqrt = impl_sqrt.rv_from_mvnorm(m, C)
+    cond_sqrt = fpx.Cond(A, rv_sqrt)
+
+    impl_conv = fpx.impl_square_root()
+    rv_conv = impl_conv.rv_from_mvnorm(m, C)
+    cond_conv = fpx.Cond(A, rv_conv)
+
+    s_conv, (A_conv, c_conv) = impl_conv.bayes_update(rv_conv, cond_conv)
+    s_sqrt, (A_sqrt, c_sqrt) = impl_sqrt.bayes_update(rv_sqrt, cond_sqrt)
+
+    assert jnp.allclose(A_conv, A_sqrt, atol=1e-4)
+
+    r1 = impl_conv.rv_to_mvnorm(s_conv)
+    r2 = impl_sqrt.rv_to_mvnorm(s_sqrt)
+    for a, b in zip(r1, r2):
+        assert jnp.allclose(a, b)
+
+    r1 = impl_conv.rv_to_mvnorm(c_conv)
+    r2 = impl_sqrt.rv_to_mvnorm(c_sqrt)
+    for a, b in zip(r1, r2):
+        assert jnp.allclose(a, b, atol=1e-4)
+
+
+def test_both_marginalizes_match():
+    A = jnp.arange(9).reshape((3, 3))
+    C = A @ A.T + jnp.eye(3)
+    m = A[0, :]
+
+    impl_sqrt = fpx.impl_conventional()
+    rv_sqrt = impl_sqrt.rv_from_mvnorm(m, C)
+    cond_sqrt = fpx.Cond(A, rv_sqrt)
+
+    impl_conv = fpx.impl_square_root()
+    rv_conv = impl_conv.rv_from_mvnorm(m, C)
+    cond_conv = fpx.Cond(A, rv_conv)
+
+    s_conv = impl_conv.marginalize(rv_conv, cond_conv)
+    s_sqrt = impl_sqrt.marginalize(rv_sqrt, cond_sqrt)
+
+    r1 = impl_conv.rv_to_mvnorm(rv_conv)
+    r2 = impl_sqrt.rv_to_mvnorm(rv_sqrt)
+    for a, b in zip(r1, r2):
+        assert jnp.allclose(a, b)
+
+    r1 = impl_conv.rv_to_mvnorm(cond_conv.noise)
+    r2 = impl_sqrt.rv_to_mvnorm(cond_sqrt.noise)
+    for a, b in zip(r1, r2):
+        assert jnp.allclose(a, b)
+
+    r1 = impl_conv.rv_to_mvnorm(s_conv)
+    r2 = impl_sqrt.rv_to_mvnorm(s_sqrt)
+    for a, b in zip(r1, r2):
+        assert jnp.allclose(a, b)
+
+
+# todo: use our own allclose which depends on the floating-point accuracy
+# todo: condense the assert_both_* a bit, maybe even remove?
+#  (The smoothers work, after all)
 
 
 def rmse(a, b):
