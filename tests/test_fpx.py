@@ -26,8 +26,7 @@ def test_filter_estimates_trajectory_accurately(impl):
     assert data.shape == (len(ts) - 1, 2)
 
     # Run a Kalman filter
-    filter_kalman = fpx.alg_filter_kalman(impl=impl)
-    (mean, cov), _aux = fpx.estimate_state(data, ssm, algorithm=filter_kalman)
+    (mean, cov), _aux = fpx.estimate_filter_kalman(data, ssm, impl=impl)
 
     # Assert that the error's magnitude is of the same order
     # as the observation noise
@@ -38,7 +37,7 @@ def test_filter_estimates_trajectory_accurately(impl):
 def test_smoother_more_accurate_than_filter(impl):
     # Set up a test problem
     ts = jnp.linspace(0, 1)
-    ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl)
+    ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-1, diffusion=1.0, impl=impl)
 
     # Create some data
     key = jax.random.PRNGKey(seed=1)
@@ -49,30 +48,32 @@ def test_smoother_more_accurate_than_filter(impl):
     assert data.shape == (len(ts) - 1, 2)
 
     # Run a Kalman filter
-    filter_kalman = fpx.alg_filter_kalman(impl=impl)
-    terminal_filter, aux = fpx.estimate_state(data, ssm, algorithm=filter_kalman)
-    mean_filter, _cov = aux["intermediates"]
+    terminal_filter, _aux = fpx.estimate_filter_kalman(data, ssm, impl=impl)
 
     # Run an RTS smoother
-    smoother_rts = fpx.alg_smoother_rts(impl=impl)
-    solution_smoother = fpx.estimate_state(data, ssm, algorithm=smoother_rts)
-    (terminal_smoother, conds), _aux = solution_smoother
-    marginals_smoother = fpx.sequence_marginalize(
-        terminal_smoother, conds, impl=impl, reverse=True
-    )
-    _initial, (mean_smoother, _cov) = marginals_smoother
+    (terminal, conds), aux = fpx.estimate_smoother_rts(data, ssm, impl=impl)
+    marginals = fpx.sequence_marginalize(terminal, conds, impl=impl, reverse=True)
 
-    # Assert that the final states coincide
-    assert jax.tree.all(jax.tree.map(jnp.allclose, terminal_smoother, terminal_filter))
+    # Assert that the final states of filter and smoother coincide
+    assert jax.tree.all(jax.tree.map(jnp.allclose, terminal, terminal_filter))
 
+    # Assert that the marginals make sense
     # Select the intermediate states of data, filter, and smoother
-    # so that the RMSEs can be compared
-    m_f = mean_filter[:-1]  # The smoother-solution does not include the terminal value
-    y = latent[:-1]  # The smoother-solution does not include the initial value
-    m_s = mean_smoother[1:]  # The filter-solution does not include the initial value
+    # so that the RMSEs can be compared. Precisely:
+    # The smoother-solution does not include the terminal value
+    # The filter-solution does not include the initial value
+    # The data vectors match the filter solution
+    m_f = aux["filter_distributions"][0][:-1]
+    y = latent[:-1]
+    m_s = marginals.mean[1:]
+
+    # Assert the filter is better than the noise
+    # Use '0.9' to increase the significance
+    assert rmse(m_f[:, :2], y[:, :2]) < 0.9 * rmse(data[:-1], y[:, :2])
 
     # Assert that the smoother is better than the filter
-    assert rmse(m_s, y) < 0.9 * rmse(m_f, y)  # use '0.9' to increase the significance
+    # Use '0.9' to increase the significance
+    assert rmse(m_s, y) < 0.9 * rmse(m_f, y)
 
 
 @pytest_cases.parametrize_with_cases("impl", cases=".")
@@ -89,27 +90,16 @@ def test_state_augmented_filter_matches_smoother_at_initial_state(impl):
     assert latent.shape == (len(ts) - 1, 4)
     assert data.shape == (len(ts) - 1, 2)
 
-    # Run an RTS smoother
-    smoother_rts = fpx.alg_smoother_rts(impl=impl)
-    posterior, _aux = fpx.estimate_state(data, ssm, algorithm=smoother_rts)
-    initial_rts, _ = fpx.sequence_marginalize(*posterior, impl=impl, reverse=True)
-
     # Run a fixedpoint-smoother via state-augmented filtering
-    filter_kalman = fpx.alg_filter_kalman(impl=impl)
-    fixedpoint_augment = fpx.alg_fixedpoint_via_filter(
-        algorithm_filter=filter_kalman, impl=impl
-    )
-    ssm_augment = fpx.ssm_augment_fixedpoint(ssm, impl=impl)
-    initial_fps, aux = fpx.estimate_state(
-        data, ssm_augment, algorithm=fixedpoint_augment
-    )
+    # and via marginalising over an RTS solution
+    initial_rts, _aux = fpx.estimate_fixedpoint_via_rts(data, ssm, impl=impl)
+    initial_fps, _aux = fpx.estimate_fixedpoint_via_filter(data, ssm, impl=impl)
 
     # Check that all leaves match
     for x1, x2 in zip(jax.tree.leaves(initial_fps), jax.tree.leaves(initial_rts)):
         assert jnp.allclose(x1, x2, atol=1e-4)
 
 
-# todo: implement state-augmentation for the filter that matches the fixed-point smoother at the initial state
 # todo: implement a fixed-point smoother that matches the state-augmented filter
 # todo: implement all these methods in sqrt-form
 

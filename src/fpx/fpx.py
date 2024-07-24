@@ -175,91 +175,63 @@ def sequence_marginalize(init, cond: Cond, impl: Impl, reverse: bool):
         marg = impl.marginalize(x, cond_k)
         return marg, marg
 
-    return jax.lax.scan(scan_fun, xs=cond, init=init, reverse=reverse)
-
-
-@dataclasses.dataclass
-class Algorithm(Generic[T]):
-    init: Callable[[Any], T]
-    predict: Callable[[T, Cond], T]
-    update: Callable[[T, Cond, jax.Array], T]
-    extract: Callable[[T], Any]
-
-
-def alg_fixedpoint_via_filter(algorithm_filter: Algorithm, impl: Impl) -> Algorithm:
-    def extract(solution):
-        rv_final, aux = algorithm_filter.extract(solution)
-        rv_reduced = impl.rv_fixedpoint_select(rv_final)
-        return rv_reduced, {"rv_final": rv_final, "filter_aux": aux}
-
-    return Algorithm(
-        init=algorithm_filter.init,
-        predict=algorithm_filter.predict,
-        update=algorithm_filter.update,
-        extract=extract,
-    )
-
-
-def alg_filter_kalman(impl: Impl) -> Algorithm:
-    def update(rv, model, data):
-        _rv, cond = impl.bayes_update(rv, model)
-        return impl.parametrize_conditional(data, cond)
-
-    def extract(solution):
-        rv_final, rv_intermediates = solution
-        return rv_final, {"intermediates": rv_intermediates}
-
-    return Algorithm(
-        init=lambda x: x,
-        extract=extract,
-        predict=impl.marginalize,
-        update=update,
-    )
-
-
-def alg_smoother_rts(impl: Impl) -> Algorithm:
-    def init(rv):
-        eye = jnp.eye(len(rv.mean))
-        zeros = jax.tree.map(jnp.zeros_like, rv)
-        return rv, Cond(eye, zeros)
-
-    def predict(x, cond):
-        return impl.bayes_update(x[0], cond)
-
-    def update(x, model, data):
-        rv, cond_posterior = x
-        _rv, cond = impl.bayes_update(rv, model)
-        return impl.parametrize_conditional(data, cond), cond_posterior
-
-    def extract(solution):
-        _terminal, (filter_solution, conds) = solution
-        rv = jax.tree.map(lambda s: s[-1, ...], filter_solution)
-        return (rv, conds), {"filter_solution": filter_solution}
-
-    return Algorithm(
-        init=init,
-        extract=extract,
-        predict=predict,
-        update=update,
-    )
+    _, all_ = jax.lax.scan(scan_fun, xs=cond, init=init, reverse=reverse)
+    return all_
 
 
 # todo: this code assumes $p(x_0 \mid y_{1:K})$,
 #  and we should use the same notation in the paper
 #  this explanation is superior,
 #  because it saves the initialisation step in all algorithm boxes!
-def estimate_state(data: jax.Array, ssm: SSM, *, algorithm: Algorithm):
+
+
+def estimate_filter_kalman(data: jax.Array, ssm: SSM, *, impl: Impl):
     def step_fun(state_k: T, inputs: tuple[jax.Array, Dynamics]) -> tuple[T, Any]:
         # Read
         (y_k, model_k) = inputs
 
         # Predict
-        state_kplus = algorithm.predict(state_k, model_k.latent)
+        state_kplus = impl.marginalize(state_k, model_k.latent)
 
         # Update
-        state_new = algorithm.update(state_kplus, model_k.observation, y_k)
-        return state_new, state_new
+        _rv, cond = impl.bayes_update(state_kplus, model_k.observation)
+        state_new = impl.parametrize_conditional(y_k, cond)
+        return state_new, ()
 
-    x0 = algorithm.init(ssm.init)
-    solution = jax.lax.scan(step_fun, xs=(data, ssm.dynamics), init=x0)
-    return algorithm.extract(solution)
+    x0 = ssm.init
+    solution, _ = jax.lax.scan(step_fun, xs=(data, ssm.dynamics), init=x0)
+    return solution, {}
+
+
+def estimate_smoother_rts(data: jax.Array, ssm: SSM, *, impl: Impl):
+    def step_fun(state_k: T, inputs: tuple[jax.Array, Dynamics]) -> tuple[T, Any]:
+        # Read
+        (y_k, model_k) = inputs
+
+        # Predict
+        state_kplus, cond = impl.bayes_update(state_k, model_k.latent)
+
+        # Update
+        _rv, gain = impl.bayes_update(state_kplus, model_k.observation)
+        state_new = impl.parametrize_conditional(y_k, gain)
+        return state_new, (state_new, cond)
+
+    x0 = ssm.init
+    solution, (filterdists, conds) = jax.lax.scan(
+        step_fun, xs=(data, ssm.dynamics), init=x0
+    )
+    return (solution, conds), {"filter_distributions": filterdists}
+
+
+def estimate_fixedpoint_via_filter(data: jax.Array, ssm: SSM, *, impl: Impl):
+    ssm_augment = ssm_augment_fixedpoint(ssm, impl=impl)
+    terminal_filter, aux = estimate_filter_kalman(data, ssm_augment, impl=impl)
+    rv_reduced = impl.rv_fixedpoint_select(terminal_filter)
+    return rv_reduced, {}
+
+
+def estimate_fixedpoint_via_rts(data: jax.Array, ssm: SSM, *, impl: Impl):
+    (terminal, conds), aux = estimate_smoother_rts(data, ssm, impl=impl)
+    marginals = sequence_marginalize(terminal, conds, impl=impl, reverse=True)
+    initial_rts = jax.tree.map(lambda s: s[0, ...], marginals)
+    return initial_rts, {}
