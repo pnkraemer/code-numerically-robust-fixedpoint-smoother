@@ -111,7 +111,7 @@ def ssm_car_tracking_velocity(ts, /, noise, diffusion, impl: Impl) -> SSM:
     return SSM(init=x0, dynamics=jax.vmap(transition)(jnp.diff(ts)))
 
 
-def sample_sequence(key, x0: jax.Array, dynamics: Dynamics, impl: Impl):
+def sequence_sample(key, x0: jax.Array, dynamics: Dynamics, impl: Impl):
     def scan_fun(x, dynamics_k: Dynamics):
         key_k, sample_k = x
 
@@ -125,6 +125,14 @@ def sample_sequence(key, x0: jax.Array, dynamics: Dynamics, impl: Impl):
         return (key_k, sample_k), (sample_k, sample_obs_k)
 
     return jax.lax.scan(scan_fun, xs=dynamics, init=(key, x0))
+
+
+def sequence_marginalize(init, cond: Cond, impl: Impl, reverse: bool):
+    def scan_fun(x, cond_k: Cond):
+        marg = impl.marginalize(x, cond_k)
+        return marg, marg
+
+    return jax.lax.scan(scan_fun, xs=cond, init=init, reverse=reverse)
 
 
 @dataclasses.dataclass
@@ -152,11 +160,38 @@ def alg_filter_kalman(impl: Impl) -> Algorithm:
     )
 
 
+def alg_smoother_rts(impl: Impl) -> Algorithm:
+    def init(rv):
+        eye = jnp.eye(len(rv.mean))
+        zeros = jax.tree.map(jnp.zeros_like, rv)
+        return rv, Cond(eye, zeros)
+
+    def predict(x, cond):
+        return impl.bayes_update(x[0], cond)
+
+    def update(x, model, data):
+        rv, cond_posterior = x
+        _rv, cond = impl.bayes_update(rv, model)
+        return impl.parametrize_conditional(data, cond), cond_posterior
+
+    def extract(solution):
+        _terminal, (filter_solution, conds) = solution
+        rv = jax.tree.map(lambda s: s[-1, ...], filter_solution)
+        return (rv, conds), {"filter_solution": filter_solution}
+
+    return Algorithm(
+        init=init,
+        extract=extract,
+        predict=predict,
+        update=update,
+    )
+
+
 # todo: this code assumes $p(x_0 \mid y_{1:K})$,
 #  and we should use the same notation in the paper
 #  this explanation is superior,
 #  because it saves the initialisation step in all algorithm boxes!
-def estimate_state(data: jax.Array, ssm: SSM, algorithm: Algorithm):
+def estimate_state(data: jax.Array, ssm: SSM, *, algorithm: Algorithm):
     def step_fun(state_k: T, inputs: tuple[jax.Array, Dynamics]) -> tuple[T, Any]:
         # Read
         (y_k, model_k) = inputs
