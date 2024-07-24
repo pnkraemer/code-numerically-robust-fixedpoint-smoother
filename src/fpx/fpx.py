@@ -43,21 +43,75 @@ class Impl(Generic[T]):
 
 
 def impl_square_root() -> Impl:
+    class SqrtNormal(NamedTuple):
+        mean: jax.Array
+        cholesky: jax.Array
+
+    def rv_initialize(m, c) -> SqrtNormal:
+        return SqrtNormal(m, jnp.linalg.cholesky(c))
+
+    def marginalize(rv: SqrtNormal, cond: Cond):
+        mean = cond.A @ rv.mean
+
+        L_AC = rv.cholesky.T @ cond.A.T
+        L_C = cond.noise.cholesky.T
+        cholesky_marg_T = jnp.concatenate([L_AC, L_C], axis=0)
+        cholesky_T = jnp.linalg.qr(cholesky_marg_T, mode="r")
+        return SqrtNormal(mean, cholesky_T.T)
+
+    def bayes_update(rv: SqrtNormal, cond: Cond):
+        R_YX = cond.noise.cholesky.T
+        R_X = rv.cholesky.T
+        R_X_F = rv.cholesky.T @ cond.A.T
+        R_y, (R_xy, G) = _revert_conditional(R_X_F=R_X_F, R_X=R_X, R_YX=R_YX)
+
+        s = cond.A @ rv.mean + cond.noise.mean
+        mean_new = rv.mean - G @ s
+        return SqrtNormal(s, R_y.T), Cond(G, SqrtNormal(mean_new, R_xy.T))
+
+    def parametrize_conditional(x: jax.Array, cond: Cond):
+        return SqrtNormal(cond.A @ x + cond.noise.mean, cond.noise.cholesky)
+
+    def rv_to_mvnorm(rv: SqrtNormal):
+        return rv.mean, rv.cholesky @ rv.cholesky.T
+
     def not_yet(*_a):
         raise NotImplementedError
 
     return Impl(
-        rv_initialize=not_yet,
-        rv_to_mvnorm=not_yet,
+        rv_initialize=rv_initialize,
+        rv_to_mvnorm=rv_to_mvnorm,
         rv_sample=not_yet,
         rv_fixedpoint_select=not_yet,
         rv_fixedpoint_augment=not_yet,
         dynamics_fixedpoint=not_yet,
-        parametrize_conditional=not_yet,
+        parametrize_conditional=parametrize_conditional,
         conditional_merge=not_yet,
-        marginalize=not_yet,
-        bayes_update=not_yet,
+        marginalize=marginalize,
+        bayes_update=bayes_update,
     )
+
+
+def _revert_conditional(R_X_F, R_X, R_YX):
+    # Taken from:
+    # https://github.com/pnkraemer/probdiffeq/blob/main/probdiffeq/util/cholesky_util.py
+
+    R = jnp.block([[R_YX, jnp.zeros((R_YX.shape[0], R_X.shape[1]))], [R_X_F, R_X]])
+    R = jnp.linalg.qr(R, mode="r")
+
+    # ~R_{Y}
+    d_out = R_YX.shape[1]
+    R_Y = R[:d_out, :d_out]
+
+    # something like the cross-covariance
+    R12 = R[:d_out, d_out:]
+
+    # Implements G = R12.T @ np.linalg.inv(R_Y.T) in clever:
+    G = jax.scipy.linalg.solve_triangular(R_Y, R12, lower=False).T
+
+    # ~R_{X \mid Y}
+    R_XY = R[d_out:, d_out:]
+    return R_Y, (R_XY, G)
 
 
 def impl_conventional() -> Impl:
