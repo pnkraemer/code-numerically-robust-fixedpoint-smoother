@@ -15,6 +15,41 @@ def case_impl_cholesky_based():
     return fpx.impl_cholesky_based()
 
 
+@pytest_cases.parametrize(
+    "compute_fun",
+    [
+        fpx.compute_fixedpoint,
+        fpx.compute_fixedpoint_via_smoother,
+        fpx.compute_fixedpoint_via_filter,
+        fpx.compute_fixedinterval,
+        fpx.compute_filter,
+    ],
+)
+def test_estimators_accept_callbacks(compute_fun):
+    # Set up a test problem
+    impl = fpx.impl_covariance_based()
+    ts = jnp.linspace(0, 1)
+    ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl)
+
+    # Create some data
+    latent, data = _sample(ssm=ssm, impl=impl)
+    assert latent.shape == (len(ts), 4)
+    assert data.shape == (len(ts) - 1, 2)
+
+    # Sanity check
+    estimate = compute_fun(impl=impl)
+    _, aux = estimate(data, ssm)
+    assert isinstance(aux, dict)
+
+    # Callback
+    def callback(*args):
+        return {"size": jax.flatten_util.ravel_pytree(args)[0].size}
+
+    estimate = compute_fun(impl=impl, cb=callback)
+    _, aux = estimate(data, ssm)
+    assert "size" in aux.keys()
+
+
 @pytest_cases.parametrize_with_cases("impl", cases=".")
 def test_filter_estimates_trajectory_accurately(impl):
     # Set up a test problem
@@ -94,7 +129,7 @@ def test_state_augmented_filter_matches_rts_smoother_at_initial_state(impl):
 
     # Run a fixedpoint-smoother via state-augmented filtering
     # and via marginalising over an RTS solution
-    estimate = fpx.compute_fixedpoint_via_fixedinterval(impl=impl)
+    estimate = fpx.compute_fixedpoint_via_smoother(impl=impl)
     initial_rts, _aux = estimate(data, ssm)
     estimate = fpx.compute_fixedpoint_via_filter(impl=impl)
     initial_fps, _aux = estimate(data, ssm)

@@ -3,6 +3,7 @@
 import dataclasses
 import jax.numpy as jnp
 import jax
+import jax.flatten_util
 from typing import Callable, Any, TypeVar, Generic, NamedTuple
 
 
@@ -422,7 +423,7 @@ def compute_stats_marginalize(impl: Impl[T], reverse: bool) -> Callable:
 #  because it saves the initialisation step in all algorithm boxes!
 
 
-def compute_fixedpoint(impl: Impl[T]) -> Callable:
+def compute_fixedpoint(impl: Impl[T], cb: Callable | None = None) -> Callable:
     """Estimate a solution of the fixed-point smoothing problem."""
 
     def estimate(data: jax.Array, ssm: SSM[T]):
@@ -438,34 +439,38 @@ def compute_fixedpoint(impl: Impl[T]) -> Callable:
             # Update
             _rv, gain = impl.bayes_update(state_kplus, model_k.observation)
             state_new = impl.conditional_parametrize(y_k, gain)
-            return (state_new, backward), ()
+
+            info = cb(state_new, backward) if cb is not None else {}
+            return (state_new, backward), info
 
         cond = impl.conditional_from_identity(ssm.init)
         init, xs = (ssm.init, cond), (data, ssm.dynamics)
-        (rv, cond), _ = jax.lax.scan(step_fun, xs=xs, init=init)
-        return impl.marginalize(rv, cond), {}
+        (rv, cond), aux = jax.lax.scan(step_fun, xs=xs, init=init)
+        return impl.marginalize(rv, cond), aux
 
     return estimate
 
 
-def compute_fixedpoint_via_fixedinterval(impl: Impl[T]) -> Callable:
+def compute_fixedpoint_via_smoother(
+    impl: Impl[T], cb: Callable | None = None
+) -> Callable:
     """Estimate a solution of the fixed-point smoothing problem.
 
     Calls a fixed-interval smoother internally.
     """
-    compute_interval = compute_fixedinterval(impl=impl)
+    compute_interval = compute_fixedinterval(impl=impl, cb=cb)
     marginalize = compute_stats_marginalize(impl=impl, reverse=True)
 
     def estimate(data: jax.Array, ssm: SSM[T]):
         (terminal, conds), aux = compute_interval(data=data, ssm=ssm)
         marginals = marginalize(terminal, conds)
         initial_rts = jax.tree.map(lambda s: s[0, ...], marginals)
-        return initial_rts, {}
+        return initial_rts, {**aux}
 
     return estimate
 
 
-def compute_fixedinterval(impl: Impl[T]) -> Callable:
+def compute_fixedinterval(impl: Impl[T], cb: Callable | None = None) -> Callable:
     """Estimate a solution of the fixed-interval smoothing problem."""
 
     def estimate(data: jax.Array, ssm: SSM[T]):
@@ -481,29 +486,32 @@ def compute_fixedinterval(impl: Impl[T]) -> Callable:
             # Update
             _rv, gain = impl.bayes_update(state_kplus, model_k.observation)
             state_new = impl.conditional_parametrize(y_k, gain)
-            return state_new, (state_new, cond)
+            info = cb([state_new, cond]) if cb is not None else {}
+            return state_new, ((state_new, cond), info)
 
         x0 = ssm.init
-        solution, (filterdists, conds) = jax.lax.scan(
+        solution, ((filterdists, conds), aux) = jax.lax.scan(
             step_fun, xs=(data, ssm.dynamics), init=x0
         )
-        return (solution, conds), {"filter_distributions": filterdists}
+        return (solution, conds), {"filter_distributions": filterdists, **aux}
 
     return estimate
 
 
-def compute_fixedpoint_via_filter(impl: Impl[T]) -> Callable:
+def compute_fixedpoint_via_filter(
+    impl: Impl[T], cb: Callable | None = None
+) -> Callable:
     """Estimate a solution of the fixed-point smoothing problem.
 
     Augments the state-space model and calls a filter internally.
     """
-    compute_fi = compute_filter(impl=impl)
+    compute_fi = compute_filter(impl=impl, cb=cb)
 
     def estimate(data: jax.Array, ssm: SSM[T]):
         ssm_augment = _ssm_augment_fixedpoint(ssm, impl=impl)
         terminal_filter, aux = compute_fi(data, ssm_augment)
         rv_reduced = impl.rv_fixedpoint_select(terminal_filter)
-        return rv_reduced, {}
+        return rv_reduced, {**aux}
 
     return estimate
 
@@ -514,13 +522,11 @@ def _ssm_augment_fixedpoint(ssm: SSM[T], impl: Impl[T]) -> SSM[T]:
     return SSM(init=init, dynamics=dynamics)
 
 
-def compute_filter(impl: Impl[T]) -> Callable:
+def compute_filter(impl: Impl[T], cb: Callable | None = None) -> Callable:
     """Estimate a solution of the filtering problem."""
 
     def estimate(data: jax.Array, ssm: SSM[T]):
-        def step_fun(
-            state_k: T, inputs: tuple[jax.Array, SSMDynamics]
-        ) -> tuple[T, Any]:
+        def step_fun(state_k: T, inputs: tuple[jax.Array, SSMDynamics]):
             # Read
             (y_k, model_k) = inputs
 
@@ -530,10 +536,12 @@ def compute_filter(impl: Impl[T]) -> Callable:
             # Update
             _rv, cond = impl.bayes_update(state_kplus, model_k.observation)
             state_new = impl.conditional_parametrize(y_k, cond)
-            return state_new, ()
+
+            info = cb(state_new) if cb is not None else {}
+            return state_new, info
 
         x0 = ssm.init
-        solution, _ = jax.lax.scan(step_fun, xs=(data, ssm.dynamics), init=x0)
-        return solution, {}
+        solution, aux = jax.lax.scan(step_fun, xs=(data, ssm.dynamics), init=x0)
+        return solution, aux
 
     return estimate
