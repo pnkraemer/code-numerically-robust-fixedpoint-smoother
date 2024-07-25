@@ -4,19 +4,25 @@ import functools
 import dataclasses
 import jax.numpy as jnp
 import jax
-from typing import Callable, NamedTuple, Any, TypeVar, Generic
+from typing import Callable, Any, TypeVar, Generic, NamedTuple
 
 
 T = TypeVar("T")
 
 
-class Cond(NamedTuple):
+@dataclasses.dataclass
+class Cond(Generic[T]):
     """Affine Gaussian conditional distributions."""
 
-    # todo: make this type generic (and register as pytree)
-
     A: jax.Array
-    noise: Any
+    noise: T
+
+
+jax.tree_util.register_pytree_node(
+    Cond,
+    lambda cond: ((cond.A, cond.noise), ()),
+    lambda a, c: Cond(*c),
+)
 
 
 class Dynamics(NamedTuple):
@@ -57,7 +63,7 @@ def impl_cholesky_based() -> Impl:
     def rv_to_mvnorm(rv: SqrtNormal):
         return rv.mean, rv.cholesky @ rv.cholesky.T
 
-    def marginalize(rv: SqrtNormal, cond: Cond):
+    def marginalize(rv: SqrtNormal, cond: Cond[SqrtNormal]) -> SqrtNormal:
         mean = cond.A @ rv.mean + cond.noise.mean
 
         R_X_F = rv.cholesky.T @ cond.A.T
@@ -66,7 +72,7 @@ def impl_cholesky_based() -> Impl:
         cholesky_T = jnp.linalg.qr(cholesky_marg_T, mode="r")
         return SqrtNormal(mean, cholesky_T.T)
 
-    def bayes_update(rv: SqrtNormal, cond: Cond):
+    def bayes_update(rv: SqrtNormal, cond: Cond[SqrtNormal]):
         R_YX = cond.noise.cholesky.T
         R_X = rv.cholesky.T
         R_X_F = rv.cholesky.T @ cond.A.T
@@ -76,16 +82,18 @@ def impl_cholesky_based() -> Impl:
         mean_new = rv.mean - G @ s
         return SqrtNormal(s, R_y.T), Cond(G, SqrtNormal(mean_new, R_xy.T))
 
-    def conditional_parametrize(x: jax.Array, cond: Cond):
+    def conditional_parametrize(x: jax.Array, cond: Cond[SqrtNormal]):
         return SqrtNormal(cond.A @ x + cond.noise.mean, cond.noise.cholesky)
 
     def rv_sample(key, /, rv: SqrtNormal) -> jax.Array:
         base = jax.random.normal(key, shape=rv.mean.shape, dtype=rv.mean.dtype)
         return rv.mean + rv.cholesky @ base
 
-    def conditional_merge(cond1: Cond, cond2: Cond) -> Cond:
-        A1, (m1, C1) = cond1
-        A2, (m2, C2) = cond2
+    def conditional_merge(
+        cond1: Cond[SqrtNormal], cond2: Cond[SqrtNormal]
+    ) -> Cond[SqrtNormal]:
+        A1, (m1, C1) = cond1.A, cond1.noise
+        A2, (m2, C2) = cond2.A, cond2.noise
 
         A = A1 @ A2
         m = A1 @ m2 + m1
@@ -102,14 +110,14 @@ def impl_cholesky_based() -> Impl:
 
     def dynamics_fixedpoint_augment(dynamics: Dynamics) -> Dynamics:
         # Augment latent dynamics
-        A, (q, Q) = dynamics.latent
+        A, (q, Q) = dynamics.latent.A, dynamics.latent.noise
         A_ = jax.scipy.linalg.block_diag(A, jnp.eye(len(A)))
         q_ = jnp.concatenate([q, jnp.zeros_like(q)], axis=0)
         Q_ = jax.scipy.linalg.block_diag(Q, jnp.zeros_like(Q))
         latent = Cond(A_, SqrtNormal(q_, Q_))
 
         # Augment observations
-        H, cond = dynamics.observation
+        H, cond = dynamics.observation.A, dynamics.observation.noise
         H_ = jnp.concatenate([H, jnp.zeros_like(H)], axis=1)
         observation = Cond(H_, cond)
 
@@ -171,15 +179,15 @@ def impl_covariance_based() -> Impl:
         base = jax.random.normal(key, shape=rv.mean.shape, dtype=rv.mean.dtype)
         return rv.mean + jnp.linalg.cholesky(rv.cov) @ base
 
-    def conditional_parametrize(x: jax.Array, /, cond: Cond) -> Normal:
+    def conditional_parametrize(x: jax.Array, /, cond: Cond[Normal]) -> Normal:
         return Normal(cond.A @ x + cond.noise.mean, cond.noise.cov)
 
-    def marginalize(rv: Normal, /, cond: Cond) -> Normal:
+    def marginalize(rv: Normal, /, cond: Cond[Normal]) -> Normal:
         mean = cond.A @ rv.mean + cond.noise.mean
         cov = cond.A @ rv.cov @ cond.A.T + cond.noise.cov
         return Normal(mean, cov)
 
-    def bayes_update(rv: Normal, cond: Cond) -> tuple[Normal, Cond]:
+    def bayes_update(rv: Normal, cond: Cond[Normal]) -> tuple[Normal, Cond[Normal]]:
         s = cond.A @ rv.mean + cond.noise.mean
         S = cond.A @ rv.cov @ cond.A.T + cond.noise.cov
 
@@ -202,23 +210,23 @@ def impl_covariance_based() -> Impl:
 
     def dynamics_fixedpoint_augment(dynamics: Dynamics) -> Dynamics:
         # Augment latent dynamics
-        A, (q, Q) = dynamics.latent
+        A, (q, Q) = dynamics.latent.A, dynamics.latent.noise
         A_ = jax.scipy.linalg.block_diag(A, jnp.eye(len(A)))
         q_ = jnp.concatenate([q, jnp.zeros_like(q)], axis=0)
         Q_ = jax.scipy.linalg.block_diag(Q, jnp.zeros_like(Q))
         latent = Cond(A_, Normal(q_, Q_))
 
         # Augment observations
-        H, cond = dynamics.observation
+        H, cond = dynamics.observation.A, dynamics.observation.noise
         H_ = jnp.concatenate([H, jnp.zeros_like(H)], axis=1)
         observation = Cond(H_, cond)
 
         # Combine and return
         return Dynamics(latent=latent, observation=observation)
 
-    def conditional_merge(cond1: Cond, cond2: Cond) -> Cond:
-        A1, (m1, C1) = cond1
-        A2, (m2, C2) = cond2
+    def conditional_merge(cond1: Cond[Normal], cond2: Cond[Normal]) -> Cond[Normal]:
+        A1, (m1, C1) = cond1.A, cond1.noise
+        A2, (m2, C2) = cond2.A, cond2.noise
 
         A = A1 @ A2
         m = A1 @ m2 + m1
@@ -341,10 +349,10 @@ def sequence_sample(key, x0: jax.Array, dynamics: Dynamics, impl: Impl):
     return jax.lax.scan(scan_fun, xs=dynamics, init=(key, x0))
 
 
-def sequence_marginalize(init, cond: Cond, impl: Impl, reverse: bool):
+def sequence_marginalize(init, cond: Cond[T], impl: Impl[T], reverse: bool) -> T:
     """Marginalize a sequence of conditionals (sequentially)."""
 
-    def scan_fun(x, cond_k: Cond):
+    def scan_fun(x, cond_k: Cond[T]):
         marg = impl.marginalize(x, cond_k)
         return marg, marg
 
