@@ -22,10 +22,7 @@ def test_filter_estimates_trajectory_accurately(impl):
     ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl)
 
     # Create some data
-    key = jax.random.PRNGKey(seed=1)
-    key, subkey = jax.random.split(key, num=2)
-    x0 = impl.rv_sample(subkey, ssm.init)
-    _, (latent, data) = fpx.sequence_sample(key, x0, ssm.dynamics, impl=impl)
+    latent, data = _sample(ssm=ssm, impl=impl)
     assert latent.shape == (len(ts) - 1, 4)
     assert data.shape == (len(ts) - 1, 2)
 
@@ -45,10 +42,7 @@ def test_smoother_more_accurate_than_filter(impl):
     ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-1, diffusion=1.0, impl=impl)
 
     # Create some data
-    key = jax.random.PRNGKey(seed=1)
-    key, subkey = jax.random.split(key, num=2)
-    x0 = impl.rv_sample(subkey, ssm.init)
-    _, (latent, data) = fpx.sequence_sample(key, x0, ssm.dynamics, impl=impl)
+    latent, data = _sample(ssm=ssm, impl=impl)
     assert latent.shape == (len(ts) - 1, 4)
     assert data.shape == (len(ts) - 1, 2)
 
@@ -60,8 +54,6 @@ def test_smoother_more_accurate_than_filter(impl):
     estimate = fpx.estimate_fixedinterval(impl=impl)
     (terminal, conds), aux = estimate(data, ssm)
 
-    # todo: make sequence_marginalize also return a Callable?
-    # todo: same for sequence_sample?
     marginalize = fpx.sequence_marginalize(impl=impl, reverse=True)
     marginals = marginalize(terminal, conds)
 
@@ -96,10 +88,7 @@ def test_state_augmented_filter_matches_rts_smoother_at_initial_state(impl):
     ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl)
 
     # Create some data
-    key = jax.random.PRNGKey(seed=1)
-    key, subkey = jax.random.split(key, num=2)
-    x0 = impl.rv_sample(subkey, ssm.init)
-    _, (latent, data) = fpx.sequence_sample(key, x0, ssm.dynamics, impl=impl)
+    latent, data = _sample(ssm=ssm, impl=impl)
     assert latent.shape == (len(ts) - 1, 4)
     assert data.shape == (len(ts) - 1, 2)
 
@@ -124,10 +113,7 @@ def test_fixedpoint_smoother_matches_state_augmented_filter(impl):
     ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl)
 
     # Create some data
-    key = jax.random.PRNGKey(seed=1)
-    key, subkey = jax.random.split(key, num=2)
-    x0 = impl.rv_sample(subkey, ssm.init)
-    _, (latent, data) = fpx.sequence_sample(key, x0, ssm.dynamics, impl=impl)
+    latent, data = _sample(ssm=ssm, impl=impl)
     assert latent.shape == (len(ts) - 1, 4)
     assert data.shape == (len(ts) - 1, 2)
 
@@ -153,10 +139,7 @@ def test_square_root_parametrisation_matches_conventional_parametrisation_for_fi
     )
 
     # Sample using the conventional parametrisation
-    key = jax.random.PRNGKey(seed=1)
-    key, subkey = jax.random.split(key, num=2)
-    x0 = impl_conv.rv_sample(subkey, ssm_conv.init)
-    _, (latent, data) = fpx.sequence_sample(key, x0, ssm_conv.dynamics, impl=impl_conv)
+    latent, data = _sample(ssm=ssm_conv, impl=impl_conv)
     assert latent.shape == (len(ts) - 1, 4)
     assert data.shape == (len(ts) - 1, 2)
 
@@ -180,6 +163,15 @@ def test_square_root_parametrisation_matches_conventional_parametrisation_for_fi
 
 
 # todo: use our own allclose which depends on the floating-point accuracy?
+
+
+def _sample(*, ssm, impl):
+    key = jax.random.PRNGKey(seed=1)
+    key, subkey = jax.random.split(key, num=2)
+    x0 = impl.rv_sample(subkey, ssm.init)
+    sample = fpx.sequence_sample(impl=impl)
+    _, (latent, data) = sample(key, x0, ssm.dynamics)
+    return latent, data
 
 
 def rmse(a, b):

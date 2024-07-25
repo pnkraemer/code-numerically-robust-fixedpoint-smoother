@@ -372,22 +372,25 @@ def ssm_car_tracking_acceleration(
     return SSM(init=x0, dynamics=dynamics)
 
 
-def sequence_sample(key, x0: jax.Array, dynamics: Dynamics[T], impl: Impl[T]):
+def sequence_sample(impl: Impl[T]) -> Callable:
     """Sample from a state-space model (sequentially)."""
 
-    def scan_fun(x, dynamics_k: Dynamics):
-        key_k, sample_k = x
+    def sample(key, x0: jax.Array, dynamics: Dynamics[T]):
+        def scan_fun(x, dynamics_k: Dynamics):
+            key_k, sample_k = x
 
-        key_k, subkey_k = jax.random.split(key_k, num=2)
-        rv = impl.conditional_parametrize(sample_k, dynamics_k.latent)
-        sample_k = impl.rv_sample(subkey_k, rv)
+            key_k, subkey_k = jax.random.split(key_k, num=2)
+            rv = impl.conditional_parametrize(sample_k, dynamics_k.latent)
+            sample_k = impl.rv_sample(subkey_k, rv)
 
-        key_k, subkey_k = jax.random.split(key_k, num=2)
-        rv_obs = impl.conditional_parametrize(sample_k, dynamics_k.observation)
-        sample_obs_k = impl.rv_sample(subkey_k, rv_obs)
-        return (key_k, sample_k), (sample_k, sample_obs_k)
+            key_k, subkey_k = jax.random.split(key_k, num=2)
+            rv_obs = impl.conditional_parametrize(sample_k, dynamics_k.observation)
+            sample_obs_k = impl.rv_sample(subkey_k, rv_obs)
+            return (key_k, sample_k), (sample_k, sample_obs_k)
 
-    return jax.lax.scan(scan_fun, xs=dynamics, init=(key, x0))
+        return jax.lax.scan(scan_fun, xs=dynamics, init=(key, x0))
+
+    return sample
 
 
 def sequence_marginalize(impl: Impl[T], reverse: bool) -> Callable:
