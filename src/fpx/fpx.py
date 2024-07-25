@@ -201,7 +201,9 @@ def impl_covariance_based() -> Impl[NormalCov]:
 
     def rv_sample(key, /, rv: NormalCov) -> jax.Array:
         base = jax.random.normal(key, shape=rv.mean.shape, dtype=rv.mean.dtype)
-        return rv.mean + jnp.linalg.cholesky(rv.cov) @ base
+        return (
+            rv.mean + jnp.linalg.cholesky(rv.cov + jnp.eye(len(rv.cov)) * 1e-8) @ base
+        )
 
     def conditional_parametrize(x: jax.Array, /, cond: SSMCond[NormalCov]) -> NormalCov:
         return NormalCov(cond.A @ x + cond.noise.mean, cond.noise.cov)
@@ -329,6 +331,26 @@ def ssm_car_tracking_velocity(
 
     m0 = jnp.zeros((2 * dim,))
     C0 = jnp.eye(2 * dim)
+    x0 = impl.rv_from_mvnorm(m0, C0)
+
+    return SSM(init=x0, dynamics=jax.vmap(transition)(jnp.diff(ts)))
+
+
+def ssm_ode(ts, /, impl: Impl[T], diffusion=1.0) -> SSM[T]:
+    def transition(dt) -> SSMDynamics:
+        A = jnp.asarray([[1.0, dt], [0, 1.0]])
+        q = jnp.asarray([0.0, 0.0])
+        Q = diffusion**2 * jnp.asarray([[dt**3 / 3, dt**2 / 2], [dt**2 / 2, dt]])
+        H = jnp.asarray([[1.0, -1.0]])
+        r = jnp.asarray([0.0])
+        R = jnp.asarray([[0.0]]) + 1e-10
+
+        rv_q = impl.rv_from_mvnorm(q, Q)
+        rv_r = impl.rv_from_mvnorm(r, R)
+        return SSMDynamics(latent=SSMCond(A, rv_q), observation=SSMCond(H, rv_r))
+
+    m0 = jnp.ones((2,))
+    C0 = jnp.eye(2)
     x0 = impl.rv_from_mvnorm(m0, C0)
 
     return SSM(init=x0, dynamics=jax.vmap(transition)(jnp.diff(ts)))
