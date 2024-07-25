@@ -4,10 +4,24 @@ import functools
 import dataclasses
 import jax.numpy as jnp
 import jax
-from typing import Callable, Any, TypeVar, Generic, NamedTuple
+from typing import Callable, Any, TypeVar, Generic, NamedTuple, Union
 
 
-T = TypeVar("T")
+class SqrtNormal(NamedTuple):
+    """Cholesky-based parameters of a multivariate Normal distribution."""
+
+    mean: jax.Array
+    cholesky: jax.Array
+
+
+class Normal(NamedTuple):
+    """Covariance-based parameters of a multivariate Normal distribution."""
+
+    mean: jax.Array
+    cov: jax.Array
+
+
+T = TypeVar("T", bound=Union[SqrtNormal, Normal])
 
 
 @dataclasses.dataclass
@@ -25,13 +39,19 @@ jax.tree_util.register_pytree_node(
 )
 
 
-class Dynamics(NamedTuple):
+@dataclasses.dataclass
+class Dynamics(Generic[T]):
     """State-space model dynamics."""
 
-    # todo: make this type generic (and register as pytree)
+    latent: Cond[T]
+    observation: Cond[T]
 
-    latent: Cond
-    observation: Cond
+
+jax.tree_util.register_pytree_node(
+    Dynamics,
+    lambda dyn: ((dyn.latent, dyn.observation), ()),
+    lambda a, c: Dynamics(*c),
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -43,19 +63,15 @@ class Impl(Generic[T]):
     rv_sample: Callable[[Any, T], jax.Array]
     rv_fixedpoint_augment: Callable[[T], T]
     rv_fixedpoint_select: Callable[[T], T]
-    conditional_parametrize: Callable[[jax.Array, Cond], T]
-    conditional_merge: Callable[[Cond, Cond], Cond]
-    dynamics_fixedpoint_augment: Callable[[Dynamics], Dynamics]
-    marginalize: Callable[[T, Cond], T]
-    bayes_update: Callable[[T, Cond], tuple[T, Cond]]
+    conditional_parametrize: Callable[[jax.Array, Cond[T]], T]
+    conditional_merge: Callable[[Cond[T], Cond[T]], Cond[T]]
+    dynamics_fixedpoint_augment: Callable[[Dynamics[T]], Dynamics[T]]
+    marginalize: Callable[[T, Cond[T]], T]
+    bayes_update: Callable[[T, Cond[T]], tuple[T, Cond[T]]]
 
 
-def impl_cholesky_based() -> Impl:
+def impl_cholesky_based() -> Impl[SqrtNormal]:
     """Construct a Cholesky-based implementation of estimation in state-space models."""
-
-    class SqrtNormal(NamedTuple):
-        mean: jax.Array
-        cholesky: jax.Array
 
     def rv_from_mvnorm(m, c) -> SqrtNormal:
         return SqrtNormal(m, jnp.linalg.cholesky(c))
@@ -108,7 +124,9 @@ def impl_cholesky_based() -> Impl:
         )
         return SqrtNormal(mean_augmented, chol_augmented)
 
-    def dynamics_fixedpoint_augment(dynamics: Dynamics) -> Dynamics:
+    def dynamics_fixedpoint_augment(
+        dynamics: Dynamics[SqrtNormal],
+    ) -> Dynamics[SqrtNormal]:
         # Augment latent dynamics
         A, (q, Q) = dynamics.latent.A, dynamics.latent.noise
         A_ = jax.scipy.linalg.block_diag(A, jnp.eye(len(A)))
@@ -145,7 +163,7 @@ def impl_cholesky_based() -> Impl:
     )
 
 
-def _revert_conditional(*, R_X_F, R_X, R_YX):
+def _revert_conditional(*, R_X_F: jax.Array, R_X: jax.Array, R_YX: jax.Array):
     # Taken from:
     # https://github.com/pnkraemer/probdiffeq/blob/main/probdiffeq/util/cholesky_util.py
 
@@ -168,12 +186,8 @@ def _revert_conditional(*, R_X_F, R_X, R_YX):
     return R_Y, (R_XY, G)
 
 
-def impl_covariance_based() -> Impl:
+def impl_covariance_based() -> Impl[Normal]:
     """Construct a covariance-based implementation of estimation in state-space models."""
-
-    class Normal(NamedTuple):
-        mean: jax.Array
-        cov: jax.Array
 
     def rv_sample(key, /, rv: Normal) -> jax.Array:
         base = jax.random.normal(key, shape=rv.mean.shape, dtype=rv.mean.dtype)
@@ -208,7 +222,7 @@ def impl_covariance_based() -> Impl:
         n = len(mean) // 2
         return Normal(mean[n:], cov[n:, n:])
 
-    def dynamics_fixedpoint_augment(dynamics: Dynamics) -> Dynamics:
+    def dynamics_fixedpoint_augment(dynamics: Dynamics[Normal]) -> Dynamics[Normal]:
         # Augment latent dynamics
         A, (q, Q) = dynamics.latent.A, dynamics.latent.noise
         A_ = jax.scipy.linalg.block_diag(A, jnp.eye(len(A)))
@@ -247,15 +261,24 @@ def impl_covariance_based() -> Impl:
     )
 
 
-class SSM(NamedTuple):
+@dataclasses.dataclass
+class SSM(Generic[T]):
     """State-space model parametrisation."""
 
-    # todo: make this type generic (and register as pytree)
-    init: Any
-    dynamics: Dynamics
+    init: T
+    dynamics: Dynamics[T]
 
 
-def ssm_car_tracking_velocity(ts, /, noise, diffusion, impl: Impl, dim: int = 2) -> SSM:
+jax.tree_util.register_pytree_node(
+    SSM,
+    lambda ssm: ((ssm.init, ssm.dynamics), ()),
+    lambda a, c: SSM(*c),
+)
+
+
+def ssm_car_tracking_velocity(
+    ts, /, noise, diffusion, impl: Impl[T], dim: int = 2
+) -> SSM[T]:
     """Construct a Wiener-velocity car-tracking model."""
 
     def transition(dt) -> Dynamics:
@@ -289,8 +312,8 @@ def ssm_car_tracking_velocity(ts, /, noise, diffusion, impl: Impl, dim: int = 2)
 
 
 def ssm_car_tracking_acceleration(
-    ts, /, noise, diffusion, impl: Impl, dim: int = 2
-) -> SSM:
+    ts, /, noise, diffusion, impl: Impl[T], dim: int = 2
+) -> SSM[T]:
     """Construct a Wiener-acceleration car-tracking model."""
 
     def transition(dt) -> Dynamics:
@@ -331,7 +354,7 @@ def ssm_car_tracking_acceleration(
     return SSM(init=x0, dynamics=dynamics)
 
 
-def sequence_sample(key, x0: jax.Array, dynamics: Dynamics, impl: Impl):
+def sequence_sample(key, x0: jax.Array, dynamics: Dynamics[T], impl: Impl[T]):
     """Sample from a state-space model (sequentially)."""
 
     def scan_fun(x, dynamics_k: Dynamics):
@@ -365,9 +388,11 @@ def sequence_marginalize(init, cond: Cond[T], impl: Impl[T], reverse: bool) -> T
 #  this explanation is superior,
 #  because it saves the initialisation step in all algorithm boxes!
 
+# todo: remove jit and return a jittable callable instead
+
 
 @functools.partial(jax.jit, static_argnames=["impl"])
-def estimate_fixedpoint(data: jax.Array, ssm: SSM, *, impl: Impl):
+def estimate_fixedpoint(data: jax.Array, ssm: SSM[T], *, impl: Impl[T]):
     """Estimate a solution of the fixed-point smoothing problem."""
 
     def step_fun(state_k, inputs: tuple[jax.Array, Dynamics]) -> tuple:
@@ -392,7 +417,9 @@ def estimate_fixedpoint(data: jax.Array, ssm: SSM, *, impl: Impl):
 
 
 @functools.partial(jax.jit, static_argnames=["impl"])
-def estimate_fixedpoint_via_fixedinterval(data: jax.Array, ssm: SSM, *, impl: Impl):
+def estimate_fixedpoint_via_fixedinterval(
+    data: jax.Array, ssm: SSM[T], *, impl: Impl[T]
+):
     """Estimate a solution of the fixed-point smoothing problem.
 
     Calls a fixed-interval smoother internally.
@@ -405,7 +432,7 @@ def estimate_fixedpoint_via_fixedinterval(data: jax.Array, ssm: SSM, *, impl: Im
 
 
 @functools.partial(jax.jit, static_argnames=["impl"])
-def estimate_fixedinterval(data: jax.Array, ssm: SSM, *, impl: Impl):
+def estimate_fixedinterval(data: jax.Array, ssm: SSM[T], *, impl: Impl[T]):
     """Estimate a solution of the fixed-interval smoothing problem."""
 
     def step_fun(state_k: T, inputs: tuple[jax.Array, Dynamics]) -> tuple[T, Any]:
@@ -428,7 +455,7 @@ def estimate_fixedinterval(data: jax.Array, ssm: SSM, *, impl: Impl):
 
 
 @functools.partial(jax.jit, static_argnames=["impl"])
-def estimate_fixedpoint_via_filter(data: jax.Array, ssm: SSM, *, impl: Impl):
+def estimate_fixedpoint_via_filter(data: jax.Array, ssm: SSM[T], *, impl: Impl[T]):
     """Estimate a solution of the fixed-point smoothing problem.
 
     Augments the state-space model and calls a filter internally.
@@ -439,14 +466,14 @@ def estimate_fixedpoint_via_filter(data: jax.Array, ssm: SSM, *, impl: Impl):
     return rv_reduced, {}
 
 
-def _ssm_augment_fixedpoint(ssm: SSM, impl: Impl) -> SSM:
+def _ssm_augment_fixedpoint(ssm: SSM[T], impl: Impl[T]) -> SSM[T]:
     init = impl.rv_fixedpoint_augment(ssm.init)
     dynamics = jax.vmap(impl.dynamics_fixedpoint_augment)(ssm.dynamics)
     return SSM(init=init, dynamics=dynamics)
 
 
 @functools.partial(jax.jit, static_argnames=["impl"])
-def estimate_filter_kalman(data: jax.Array, ssm: SSM, *, impl: Impl):
+def estimate_filter_kalman(data: jax.Array, ssm: SSM[T], *, impl: Impl[T]):
     """Estimate a solution of the filtering problem."""
 
     def step_fun(state_k: T, inputs: tuple[jax.Array, Dynamics]) -> tuple[T, Any]:
