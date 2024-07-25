@@ -6,25 +6,25 @@ import jax
 from typing import Callable, Any, TypeVar, Generic, NamedTuple, Union
 
 
-class CholNormal(NamedTuple):
+class NormalChol(NamedTuple):
     """Cholesky-based parameters of a multivariate Normal distribution."""
 
     mean: jax.Array
     cholesky: jax.Array
 
 
-class CovNormal(NamedTuple):
+class NormalCov(NamedTuple):
     """Covariance-based parameters of a multivariate Normal distribution."""
 
     mean: jax.Array
     cov: jax.Array
 
 
-T = TypeVar("T", bound=Union[CholNormal, CovNormal])
+T = TypeVar("T", bound=Union[NormalChol, NormalCov])
 
 
 @dataclasses.dataclass
-class Cond(Generic[T]):
+class SSMCond(Generic[T]):
     """Affine Gaussian conditional distributions."""
 
     A: jax.Array
@@ -32,24 +32,24 @@ class Cond(Generic[T]):
 
 
 jax.tree_util.register_pytree_node(
-    Cond,
+    SSMCond,
     lambda cond: ((cond.A, cond.noise), ()),
-    lambda a, c: Cond(*c),
+    lambda a, c: SSMCond(*c),
 )
 
 
 @dataclasses.dataclass
-class Dynamics(Generic[T]):
+class SSMDynamics(Generic[T]):
     """State-space model dynamics."""
 
-    latent: Cond[T]
-    observation: Cond[T]
+    latent: SSMCond[T]
+    observation: SSMCond[T]
 
 
 jax.tree_util.register_pytree_node(
-    Dynamics,
+    SSMDynamics,
     lambda dyn: ((dyn.latent, dyn.observation), ()),
-    lambda a, c: Dynamics(*c),
+    lambda a, c: SSMDynamics(*c),
 )
 
 
@@ -62,33 +62,33 @@ class Impl(Generic[T]):
     rv_sample: Callable[[Any, T], jax.Array]
     rv_fixedpoint_augment: Callable[[T], T]
     rv_fixedpoint_select: Callable[[T], T]
-    conditional_parametrize: Callable[[jax.Array, Cond[T]], T]
-    conditional_merge: Callable[[Cond[T], Cond[T]], Cond[T]]
-    conditional_from_identity: Callable[[T], Cond[T]]
-    dynamics_fixedpoint_augment: Callable[[Dynamics[T]], Dynamics[T]]
-    marginalize: Callable[[T, Cond[T]], T]
-    bayes_update: Callable[[T, Cond[T]], tuple[T, Cond[T]]]
+    conditional_parametrize: Callable[[jax.Array, SSMCond[T]], T]
+    conditional_merge: Callable[[SSMCond[T], SSMCond[T]], SSMCond[T]]
+    conditional_from_identity: Callable[[T], SSMCond[T]]
+    dynamics_fixedpoint_augment: Callable[[SSMDynamics[T]], SSMDynamics[T]]
+    marginalize: Callable[[T, SSMCond[T]], T]
+    bayes_update: Callable[[T, SSMCond[T]], tuple[T, SSMCond[T]]]
 
 
-def impl_cholesky_based() -> Impl[CholNormal]:
+def impl_cholesky_based() -> Impl[NormalChol]:
     """Construct a Cholesky-based implementation of estimation in state-space models."""
 
-    def rv_from_mvnorm(m, c) -> CholNormal:
-        return CholNormal(m, jnp.linalg.cholesky(c))
+    def rv_from_mvnorm(m, c) -> NormalChol:
+        return NormalChol(m, jnp.linalg.cholesky(c))
 
-    def rv_to_mvnorm(rv: CholNormal):
+    def rv_to_mvnorm(rv: NormalChol):
         return rv.mean, rv.cholesky @ rv.cholesky.T
 
-    def marginalize(rv: CholNormal, cond: Cond[CholNormal]) -> CholNormal:
+    def marginalize(rv: NormalChol, cond: SSMCond[NormalChol]) -> NormalChol:
         mean = cond.A @ rv.mean + cond.noise.mean
 
         R_X_F = rv.cholesky.T @ cond.A.T
         R_X = cond.noise.cholesky.T
         cholesky_marg_T = jnp.concatenate([R_X_F, R_X], axis=0)
         cholesky_T = jnp.linalg.qr(cholesky_marg_T, mode="r")
-        return CholNormal(mean, cholesky_T.T)
+        return NormalChol(mean, cholesky_T.T)
 
-    def bayes_update(rv: CholNormal, cond: Cond[CholNormal]):
+    def bayes_update(rv: NormalChol, cond: SSMCond[NormalChol]):
         R_YX = cond.noise.cholesky.T
         R_X = rv.cholesky.T
         R_X_F = rv.cholesky.T @ cond.A.T
@@ -96,63 +96,63 @@ def impl_cholesky_based() -> Impl[CholNormal]:
 
         s = cond.A @ rv.mean + cond.noise.mean
         mean_new = rv.mean - G @ s
-        return CholNormal(s, R_y.T), Cond(G, CholNormal(mean_new, R_xy.T))
+        return NormalChol(s, R_y.T), SSMCond(G, NormalChol(mean_new, R_xy.T))
 
-    def conditional_parametrize(x: jax.Array, cond: Cond[CholNormal]):
-        return CholNormal(cond.A @ x + cond.noise.mean, cond.noise.cholesky)
+    def conditional_parametrize(x: jax.Array, cond: SSMCond[NormalChol]):
+        return NormalChol(cond.A @ x + cond.noise.mean, cond.noise.cholesky)
 
-    def rv_sample(key, /, rv: CholNormal) -> jax.Array:
+    def rv_sample(key, /, rv: NormalChol) -> jax.Array:
         base = jax.random.normal(key, shape=rv.mean.shape, dtype=rv.mean.dtype)
         return rv.mean + rv.cholesky @ base
 
     def conditional_merge(
-        cond1: Cond[CholNormal], cond2: Cond[CholNormal]
-    ) -> Cond[CholNormal]:
+        cond1: SSMCond[NormalChol], cond2: SSMCond[NormalChol]
+    ) -> SSMCond[NormalChol]:
         A1, (m1, C1) = cond1.A, cond1.noise
         A2, (m2, C2) = cond2.A, cond2.noise
 
         A = A1 @ A2
         m = A1 @ m2 + m1
         chol_T = jnp.linalg.qr(jnp.concatenate([C2.T @ A1.T, C1.T]), mode="r")
-        return Cond(A, CholNormal(m, chol_T.T))
+        return SSMCond(A, NormalChol(m, chol_T.T))
 
-    def conditional_from_identity(like: CholNormal) -> Cond[CholNormal]:
+    def conditional_from_identity(like: NormalChol) -> SSMCond[NormalChol]:
         eye = jnp.eye(len(like.mean))
         noise = jax.tree.map(jnp.zeros_like, like)
-        return Cond(eye, noise)
+        return SSMCond(eye, noise)
 
-    def rv_fixedpoint_augment(rv: CholNormal) -> CholNormal:
+    def rv_fixedpoint_augment(rv: NormalChol) -> NormalChol:
         mean, chol = rv
         mean_augmented = jnp.concatenate([mean, mean], axis=0)
         chol_augmented = jnp.block(
             [[chol, jnp.zeros_like(chol)], [chol, jnp.zeros_like(chol)]]
         )
-        return CholNormal(mean_augmented, chol_augmented)
+        return NormalChol(mean_augmented, chol_augmented)
 
     def dynamics_fixedpoint_augment(
-        dynamics: Dynamics[CholNormal],
-    ) -> Dynamics[CholNormal]:
+        dynamics: SSMDynamics[NormalChol],
+    ) -> SSMDynamics[NormalChol]:
         # Augment latent dynamics
         A, (q, Q) = dynamics.latent.A, dynamics.latent.noise
         A_ = jax.scipy.linalg.block_diag(A, jnp.eye(len(A)))
         q_ = jnp.concatenate([q, jnp.zeros_like(q)], axis=0)
         Q_ = jax.scipy.linalg.block_diag(Q, jnp.zeros_like(Q))
-        latent = Cond(A_, CholNormal(q_, Q_))
+        latent = SSMCond(A_, NormalChol(q_, Q_))
 
         # Augment observations
         H, cond = dynamics.observation.A, dynamics.observation.noise
         H_ = jnp.concatenate([H, jnp.zeros_like(H)], axis=1)
-        observation = Cond(H_, cond)
+        observation = SSMCond(H_, cond)
 
         # Combine and return
-        return Dynamics(latent=latent, observation=observation)
+        return SSMDynamics(latent=latent, observation=observation)
 
-    def rv_fixedpoint_select(rv: CholNormal) -> CholNormal:
+    def rv_fixedpoint_select(rv: NormalChol) -> NormalChol:
         mean, cholesky = rv
         n = len(mean) // 2
         mean_new = mean[n:]
         cholesky_new = jnp.linalg.qr(cholesky.T[:, n:], mode="r").T
-        return CholNormal(mean_new, cholesky_new)
+        return NormalChol(mean_new, cholesky_new)
 
     return Impl(
         rv_from_mvnorm=rv_from_mvnorm,
@@ -192,81 +192,81 @@ def _revert_conditional(*, R_X_F: jax.Array, R_X: jax.Array, R_YX: jax.Array):
     return R_Y, (R_XY, G)
 
 
-def impl_covariance_based() -> Impl[CovNormal]:
+def impl_covariance_based() -> Impl[NormalCov]:
     """Construct a covariance-based implementation of estimation in state-space models."""
 
-    def rv_sample(key, /, rv: CovNormal) -> jax.Array:
+    def rv_sample(key, /, rv: NormalCov) -> jax.Array:
         base = jax.random.normal(key, shape=rv.mean.shape, dtype=rv.mean.dtype)
         return rv.mean + jnp.linalg.cholesky(rv.cov) @ base
 
-    def conditional_parametrize(x: jax.Array, /, cond: Cond[CovNormal]) -> CovNormal:
-        return CovNormal(cond.A @ x + cond.noise.mean, cond.noise.cov)
+    def conditional_parametrize(x: jax.Array, /, cond: SSMCond[NormalCov]) -> NormalCov:
+        return NormalCov(cond.A @ x + cond.noise.mean, cond.noise.cov)
 
-    def marginalize(rv: CovNormal, /, cond: Cond[CovNormal]) -> CovNormal:
+    def marginalize(rv: NormalCov, /, cond: SSMCond[NormalCov]) -> NormalCov:
         mean = cond.A @ rv.mean + cond.noise.mean
         cov = cond.A @ rv.cov @ cond.A.T + cond.noise.cov
-        return CovNormal(mean, cov)
+        return NormalCov(mean, cov)
 
     def bayes_update(
-        rv: CovNormal, cond: Cond[CovNormal]
-    ) -> tuple[CovNormal, Cond[CovNormal]]:
+        rv: NormalCov, cond: SSMCond[NormalCov]
+    ) -> tuple[NormalCov, SSMCond[NormalCov]]:
         s = cond.A @ rv.mean + cond.noise.mean
         S = cond.A @ rv.cov @ cond.A.T + cond.noise.cov
 
         gain = jnp.linalg.solve(S.T, cond.A @ rv.cov).T
         mean_new = rv.mean - gain @ s
         cov_new = rv.cov - gain @ S @ gain.T
-        return CovNormal(s, S), Cond(gain, CovNormal(mean_new, cov_new))
+        return NormalCov(s, S), SSMCond(gain, NormalCov(mean_new, cov_new))
 
-    def rv_fixedpoint_augment(rv: CovNormal) -> CovNormal:
+    def rv_fixedpoint_augment(rv: NormalCov) -> NormalCov:
         mean, cov = rv
         mean_augmented = jnp.concatenate([mean, mean], axis=0)
         cov_augmented_row = jnp.concatenate([cov, cov], axis=1)
         cov_augmented = jnp.concatenate([cov_augmented_row, cov_augmented_row], axis=0)
-        return CovNormal(mean_augmented, cov_augmented)
+        return NormalCov(mean_augmented, cov_augmented)
 
-    def rv_fixedpoint_select(rv: CovNormal) -> CovNormal:
+    def rv_fixedpoint_select(rv: NormalCov) -> NormalCov:
         mean, cov = rv
         n = len(mean) // 2
-        return CovNormal(mean[n:], cov[n:, n:])
+        return NormalCov(mean[n:], cov[n:, n:])
 
     def dynamics_fixedpoint_augment(
-        dynamics: Dynamics[CovNormal],
-    ) -> Dynamics[CovNormal]:
+        dynamics: SSMDynamics[NormalCov],
+    ) -> SSMDynamics[NormalCov]:
         # Augment latent dynamics
         A, (q, Q) = dynamics.latent.A, dynamics.latent.noise
         A_ = jax.scipy.linalg.block_diag(A, jnp.eye(len(A)))
         q_ = jnp.concatenate([q, jnp.zeros_like(q)], axis=0)
         Q_ = jax.scipy.linalg.block_diag(Q, jnp.zeros_like(Q))
-        latent = Cond(A_, CovNormal(q_, Q_))
+        latent = SSMCond(A_, NormalCov(q_, Q_))
 
         # Augment observations
         H, cond = dynamics.observation.A, dynamics.observation.noise
         H_ = jnp.concatenate([H, jnp.zeros_like(H)], axis=1)
-        observation = Cond(H_, cond)
+        observation = SSMCond(H_, cond)
 
         # Combine and return
-        return Dynamics(latent=latent, observation=observation)
+        return SSMDynamics(latent=latent, observation=observation)
 
     def conditional_merge(
-        cond1: Cond[CovNormal], cond2: Cond[CovNormal]
-    ) -> Cond[CovNormal]:
+        cond1: SSMCond[NormalCov], cond2: SSMCond[NormalCov]
+    ) -> SSMCond[NormalCov]:
         A1, (m1, C1) = cond1.A, cond1.noise
         A2, (m2, C2) = cond2.A, cond2.noise
 
         A = A1 @ A2
         m = A1 @ m2 + m1
         C = A1 @ C2 @ A1.T + C1
-        return Cond(A, CovNormal(m, C))
+        return SSMCond(A, NormalCov(m, C))
 
-    def conditional_from_identity(like: CovNormal) -> Cond[CovNormal]:
+    def conditional_from_identity(like: NormalCov) -> SSMCond[NormalCov]:
         eye = jnp.eye(len(like.mean))
         noise = jax.tree.map(jnp.zeros_like, like)
-        return Cond(eye, noise)
+        return SSMCond(eye, noise)
 
     return Impl(
         rv_to_mvnorm=lambda rv: (rv.mean, rv.cov),
-        rv_from_mvnorm=lambda m, c: CovNormal(m, c),
+        rv_from_mvnorm=lambda m, c: NormalCov(m, c),
         rv_sample=rv_sample,
         conditional_parametrize=conditional_parametrize,
         marginalize=marginalize,
@@ -284,7 +284,7 @@ class SSM(Generic[T]):
     """State-space model parametrisation."""
 
     init: T
-    dynamics: Dynamics[T]
+    dynamics: SSMDynamics[T]
 
 
 jax.tree_util.register_pytree_node(
@@ -299,7 +299,7 @@ def ssm_car_tracking_velocity(
 ) -> SSM[T]:
     """Construct a Wiener-velocity car-tracking model."""
 
-    def transition(dt) -> Dynamics:
+    def transition(dt) -> SSMDynamics:
         eye_d = jnp.eye(dim)
         one_d = jnp.ones((dim,))
 
@@ -320,7 +320,7 @@ def ssm_car_tracking_velocity(
 
         rv_q = impl.rv_from_mvnorm(q, Q)
         rv_r = impl.rv_from_mvnorm(r, R)
-        return Dynamics(latent=Cond(A, rv_q), observation=Cond(H, rv_r))
+        return SSMDynamics(latent=SSMCond(A, rv_q), observation=SSMCond(H, rv_r))
 
     m0 = jnp.zeros((2 * dim,))
     C0 = jnp.eye(2 * dim)
@@ -334,7 +334,7 @@ def ssm_car_tracking_acceleration(
 ) -> SSM[T]:
     """Construct a Wiener-acceleration car-tracking model."""
 
-    def transition(dt) -> Dynamics:
+    def transition(dt) -> SSMDynamics:
         eye_d = jnp.eye(dim)
         one_d = jnp.ones((dim,))
 
@@ -363,7 +363,7 @@ def ssm_car_tracking_acceleration(
 
         rv_q = impl.rv_from_mvnorm(q, Q)
         rv_r = impl.rv_from_mvnorm(r, R)
-        return Dynamics(latent=Cond(A, rv_q), observation=Cond(H, rv_r))
+        return SSMDynamics(latent=SSMCond(A, rv_q), observation=SSMCond(H, rv_r))
 
     m0 = jnp.zeros((3 * dim,))
     C0 = jnp.eye(3 * dim)
@@ -375,8 +375,8 @@ def ssm_car_tracking_acceleration(
 def sequence_sample(impl: Impl[T]) -> Callable:
     """Sample from a state-space model (sequentially)."""
 
-    def sample(key, x0: jax.Array, dynamics: Dynamics[T]):
-        def scan_fun(x, dynamics_k: Dynamics):
+    def sample(key, x0: jax.Array, dynamics: SSMDynamics[T]):
+        def scan_fun(x, dynamics_k: SSMDynamics):
             key_k, sample_k = x
 
             key_k, subkey_k = jax.random.split(key_k, num=2)
@@ -396,8 +396,8 @@ def sequence_sample(impl: Impl[T]) -> Callable:
 def sequence_marginalize(impl: Impl[T], reverse: bool) -> Callable:
     """Marginalize a sequence of conditionals (sequentially)."""
 
-    def marginalize(init: T, cond: Cond[T]) -> T:
-        def scan_fun(x, cond_k: Cond[T]):
+    def marginalize(init: T, cond: SSMCond[T]) -> T:
+        def scan_fun(x, cond_k: SSMCond[T]):
             marg = impl.marginalize(x, cond_k)
             return marg, marg
 
@@ -417,7 +417,7 @@ def estimate_fixedpoint(impl: Impl[T]) -> Callable:
     """Estimate a solution of the fixed-point smoothing problem."""
 
     def estimate(data: jax.Array, ssm: SSM[T]):
-        def step_fun(state_k, inputs: tuple[jax.Array, Dynamics]) -> tuple:
+        def step_fun(state_k, inputs: tuple[jax.Array, SSMDynamics]) -> tuple:
             # Read
             (y_k, model_k) = inputs
 
@@ -460,7 +460,9 @@ def estimate_fixedinterval(impl: Impl[T]) -> Callable:
     """Estimate a solution of the fixed-interval smoothing problem."""
 
     def estimate(data: jax.Array, ssm: SSM[T]):
-        def step_fun(state_k: T, inputs: tuple[jax.Array, Dynamics]) -> tuple[T, Any]:
+        def step_fun(
+            state_k: T, inputs: tuple[jax.Array, SSMDynamics]
+        ) -> tuple[T, Any]:
             # Read
             (y_k, model_k) = inputs
 
@@ -507,7 +509,9 @@ def estimate_filter(impl: Impl[T]) -> Callable:
     """Estimate a solution of the filtering problem."""
 
     def estimate(data: jax.Array, ssm: SSM[T]):
-        def step_fun(state_k: T, inputs: tuple[jax.Array, Dynamics]) -> tuple[T, Any]:
+        def step_fun(
+            state_k: T, inputs: tuple[jax.Array, SSMDynamics]
+        ) -> tuple[T, Any]:
             # Read
             (y_k, model_k) = inputs
 
