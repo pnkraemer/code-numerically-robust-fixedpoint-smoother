@@ -55,7 +55,7 @@ def test_smoother_more_accurate_than_filter(impl):
     terminal_filter, _aux = fpx.estimate_filter_kalman(data, ssm, impl=impl)
 
     # Run an RTS smoother
-    (terminal, conds), aux = fpx.estimate_smoother_rts(data, ssm, impl=impl)
+    (terminal, conds), aux = fpx.estimate_fixedinterval(data, ssm, impl=impl)
     marginals = fpx.sequence_marginalize(terminal, conds, impl=impl, reverse=True)
 
     # Assert that the final states of filter and smoother coincide

@@ -1,4 +1,4 @@
-"""FPX: Fixed-point smoothing in JAX."""
+"""Numerically stable fixed-point smoothing in JAX."""
 
 import functools
 import dataclasses
@@ -12,6 +12,8 @@ T = TypeVar("T")
 
 class Cond(NamedTuple):
     """Affine Gaussian conditional distributions."""
+
+    # todo: make this type generic (and register as pytree)
 
     A: jax.Array
     noise: Any
@@ -28,7 +30,7 @@ class Dynamics(NamedTuple):
 
 @dataclasses.dataclass(frozen=True)
 class Impl(Generic[T]):
-    """State-space model implementation."""
+    """Implementation of estimation in state-space models."""
 
     rv_from_mvnorm: Callable[[jax.Array, jax.Array], T]
     rv_to_mvnorm: Callable[[T], tuple[jax.Array, jax.Array]]
@@ -43,6 +45,8 @@ class Impl(Generic[T]):
 
 
 def impl_cholesky_based() -> Impl:
+    """Construct a Cholesky-based implementation of estimation in state-space models."""
+
     class SqrtNormal(NamedTuple):
         mean: jax.Array
         cholesky: jax.Array
@@ -157,7 +161,7 @@ def _revert_conditional(*, R_X_F, R_X, R_YX):
 
 
 def impl_covariance_based() -> Impl:
-    """Construct a state-space model implementation."""
+    """Construct a covariance-based implementation of estimation in state-space models."""
 
     class Normal(NamedTuple):
         mean: jax.Array
@@ -236,17 +240,11 @@ def impl_covariance_based() -> Impl:
 
 
 class SSM(NamedTuple):
-    """State-space model."""
+    """State-space model parametrisation."""
 
     # todo: make this type generic (and register as pytree)
     init: Any
     dynamics: Dynamics
-
-
-def ssm_augment_fixedpoint(ssm: SSM, impl: Impl) -> SSM:
-    init = impl.rv_fixedpoint_augment(ssm.init)
-    dynamics = jax.vmap(impl.dynamics_fixedpoint_augment)(ssm.dynamics)
-    return SSM(init=init, dynamics=dynamics)
 
 
 def ssm_car_tracking_velocity(ts, /, noise, diffusion, impl: Impl, dim: int = 2) -> SSM:
@@ -326,6 +324,8 @@ def ssm_car_tracking_acceleration(
 
 
 def sequence_sample(key, x0: jax.Array, dynamics: Dynamics, impl: Impl):
+    """Sample from a state-space model (sequentially)."""
+
     def scan_fun(x, dynamics_k: Dynamics):
         key_k, sample_k = x
 
@@ -342,6 +342,8 @@ def sequence_sample(key, x0: jax.Array, dynamics: Dynamics, impl: Impl):
 
 
 def sequence_marginalize(init, cond: Cond, impl: Impl, reverse: bool):
+    """Marginalize a sequence of conditionals (sequentially)."""
+
     def scan_fun(x, cond_k: Cond):
         marg = impl.marginalize(x, cond_k)
         return marg, marg
@@ -357,47 +359,9 @@ def sequence_marginalize(init, cond: Cond, impl: Impl, reverse: bool):
 
 
 @functools.partial(jax.jit, static_argnames=["impl"])
-def estimate_filter_kalman(data: jax.Array, ssm: SSM, *, impl: Impl):
-    def step_fun(state_k: T, inputs: tuple[jax.Array, Dynamics]) -> tuple[T, Any]:
-        # Read
-        (y_k, model_k) = inputs
-
-        # Predict
-        state_kplus = impl.marginalize(state_k, model_k.latent)
-
-        # Update
-        _rv, cond = impl.bayes_update(state_kplus, model_k.observation)
-        state_new = impl.conditional_parametrize(y_k, cond)
-        return state_new, ()
-
-    x0 = ssm.init
-    solution, _ = jax.lax.scan(step_fun, xs=(data, ssm.dynamics), init=x0)
-    return solution, {}
-
-
-@functools.partial(jax.jit, static_argnames=["impl"])
-def estimate_smoother_rts(data: jax.Array, ssm: SSM, *, impl: Impl):
-    def step_fun(state_k: T, inputs: tuple[jax.Array, Dynamics]) -> tuple[T, Any]:
-        # Read
-        (y_k, model_k) = inputs
-
-        # Predict
-        state_kplus, cond = impl.bayes_update(state_k, model_k.latent)
-
-        # Update
-        _rv, gain = impl.bayes_update(state_kplus, model_k.observation)
-        state_new = impl.conditional_parametrize(y_k, gain)
-        return state_new, (state_new, cond)
-
-    x0 = ssm.init
-    solution, (filterdists, conds) = jax.lax.scan(
-        step_fun, xs=(data, ssm.dynamics), init=x0
-    )
-    return (solution, conds), {"filter_distributions": filterdists}
-
-
-@functools.partial(jax.jit, static_argnames=["impl"])
 def estimate_fixedpoint(data: jax.Array, ssm: SSM, *, impl: Impl):
+    """Estimate a solution of the fixed-point smoothing problem."""
+
     def step_fun(state_k, inputs: tuple[jax.Array, Dynamics]) -> tuple:
         # Read
         (y_k, model_k) = inputs
@@ -420,16 +384,75 @@ def estimate_fixedpoint(data: jax.Array, ssm: SSM, *, impl: Impl):
 
 
 @functools.partial(jax.jit, static_argnames=["impl"])
+def estimate_fixedpoint_via_fixedinterval(data: jax.Array, ssm: SSM, *, impl: Impl):
+    """Estimate a solution of the fixed-point smoothing problem.
+
+    Calls a fixed-interval smoother internally.
+    """
+
+    (terminal, conds), aux = estimate_fixedinterval(data, ssm, impl=impl)
+    marginals = sequence_marginalize(terminal, conds, impl=impl, reverse=True)
+    initial_rts = jax.tree.map(lambda s: s[0, ...], marginals)
+    return initial_rts, {}
+
+
+@functools.partial(jax.jit, static_argnames=["impl"])
+def estimate_fixedinterval(data: jax.Array, ssm: SSM, *, impl: Impl):
+    """Estimate a solution of the fixed-interval smoothing problem."""
+
+    def step_fun(state_k: T, inputs: tuple[jax.Array, Dynamics]) -> tuple[T, Any]:
+        # Read
+        (y_k, model_k) = inputs
+
+        # Predict
+        state_kplus, cond = impl.bayes_update(state_k, model_k.latent)
+
+        # Update
+        _rv, gain = impl.bayes_update(state_kplus, model_k.observation)
+        state_new = impl.conditional_parametrize(y_k, gain)
+        return state_new, (state_new, cond)
+
+    x0 = ssm.init
+    solution, (filterdists, conds) = jax.lax.scan(
+        step_fun, xs=(data, ssm.dynamics), init=x0
+    )
+    return (solution, conds), {"filter_distributions": filterdists}
+
+
+@functools.partial(jax.jit, static_argnames=["impl"])
 def estimate_fixedpoint_via_filter(data: jax.Array, ssm: SSM, *, impl: Impl):
-    ssm_augment = ssm_augment_fixedpoint(ssm, impl=impl)
+    """Estimate a solution of the fixed-point smoothing problem.
+
+    Augments the state-space model and calls a filter internally.
+    """
+    ssm_augment = _ssm_augment_fixedpoint(ssm, impl=impl)
     terminal_filter, aux = estimate_filter_kalman(data, ssm_augment, impl=impl)
     rv_reduced = impl.rv_fixedpoint_select(terminal_filter)
     return rv_reduced, {}
 
 
+def _ssm_augment_fixedpoint(ssm: SSM, impl: Impl) -> SSM:
+    init = impl.rv_fixedpoint_augment(ssm.init)
+    dynamics = jax.vmap(impl.dynamics_fixedpoint_augment)(ssm.dynamics)
+    return SSM(init=init, dynamics=dynamics)
+
+
 @functools.partial(jax.jit, static_argnames=["impl"])
-def estimate_fixedpoint_via_fixedinterval(data: jax.Array, ssm: SSM, *, impl: Impl):
-    (terminal, conds), aux = estimate_smoother_rts(data, ssm, impl=impl)
-    marginals = sequence_marginalize(terminal, conds, impl=impl, reverse=True)
-    initial_rts = jax.tree.map(lambda s: s[0, ...], marginals)
-    return initial_rts, {}
+def estimate_filter_kalman(data: jax.Array, ssm: SSM, *, impl: Impl):
+    """Estimate a solution of the filtering problem."""
+
+    def step_fun(state_k: T, inputs: tuple[jax.Array, Dynamics]) -> tuple[T, Any]:
+        # Read
+        (y_k, model_k) = inputs
+
+        # Predict
+        state_kplus = impl.marginalize(state_k, model_k.latent)
+
+        # Update
+        _rv, cond = impl.bayes_update(state_kplus, model_k.observation)
+        state_new = impl.conditional_parametrize(y_k, cond)
+        return state_new, ()
+
+    x0 = ssm.init
+    solution, _ = jax.lax.scan(step_fun, xs=(data, ssm.dynamics), init=x0)
+    return solution, {}

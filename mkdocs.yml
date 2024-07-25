@@ -6,7 +6,7 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
-          paths: [src]  # search packages in the src folder
+          paths: [src]
           options:
             show_signature: true
             show_signature_annotations: true
