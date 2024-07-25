@@ -8,6 +8,7 @@ from fpx import fpx
 import argparse
 
 
+# todo: save results to a dictionary
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_runs", type=int, default=5)
@@ -36,22 +37,15 @@ def main():
         estimate = jax.jit(fpx.compute_fixedpoint(impl=impl))
         ref, _ = estimate(data, ssm)
 
-        print("\nFixedpoint via filter")
-        estimate = jax.jit(fpx.compute_fixedpoint_via_filter(impl=impl))
-        t = benchmark(estimate, ref=ref, ssm=ssm, data=data, num_runs=args.num_runs)
-        print(f"\t {min(t):.1e}")
-
-        print("\nFixedpoint via fixed-interval")
-        estimate = jax.jit(fpx.compute_fixedpoint_via_fixedinterval(impl=impl))
-        t = benchmark(estimate, ref=ref, ssm=ssm, data=data, num_runs=args.num_runs)
-        print(f"\t {min(t):.1e}")
-
-        print("\nFixedpoint via recursion")
-        estimate = jax.jit(fpx.compute_fixedpoint(impl=impl))
-        t = benchmark(estimate, ref=ref, ssm=ssm, data=data, num_runs=args.num_runs)
-        print(f"\t {min(t):.1e}")
-
-        print()
+        for name, estimate in [
+            ("filter", fpx.compute_fixedpoint_via_filter(impl=impl)),
+            ("fixed-interval", fpx.compute_fixedpoint_via_fixedinterval(impl=impl)),
+            ("recursion", fpx.compute_fixedpoint(impl=impl)),
+        ]:
+            print(f"\nFixedpoint via {name}")
+            estimate = jax.jit(estimate)
+            t = benchmark(estimate, ref=ref, ssm=ssm, data=data, num_runs=args.num_runs)
+            print(f"\t {min(t):.1e}")
 
 
 def benchmark(fixedpoint, *, ref, data, ssm, num_runs):
