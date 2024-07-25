@@ -30,7 +30,8 @@ def test_filter_estimates_trajectory_accurately(impl):
     assert data.shape == (len(ts) - 1, 2)
 
     # Run a Kalman filter
-    (mean, cov), _aux = fpx.estimate_filter_kalman(data, ssm, impl=impl)
+    estimate = fpx.estimate_filter(impl=impl)
+    (mean, cov), _aux = estimate(data, ssm)
 
     # Assert that the error's magnitude is of the same order
     # as the observation noise
@@ -52,10 +53,15 @@ def test_smoother_more_accurate_than_filter(impl):
     assert data.shape == (len(ts) - 1, 2)
 
     # Run a Kalman filter
-    terminal_filter, _aux = fpx.estimate_filter_kalman(data, ssm, impl=impl)
+    estimate = fpx.estimate_filter(impl=impl)
+    terminal_filter, _aux = estimate(data, ssm)
 
     # Run an RTS smoother
-    (terminal, conds), aux = fpx.estimate_fixedinterval(data, ssm, impl=impl)
+    estimate = fpx.estimate_fixedinterval(impl=impl)
+    (terminal, conds), aux = estimate(data, ssm)
+
+    # todo: make sequence_marginalize also return a Callable?
+    # todo: same for sequence_sample?
     marginals = fpx.sequence_marginalize(terminal, conds, impl=impl, reverse=True)
 
     # Assert that the final states of filter and smoother coincide
@@ -98,8 +104,10 @@ def test_state_augmented_filter_matches_rts_smoother_at_initial_state(impl):
 
     # Run a fixedpoint-smoother via state-augmented filtering
     # and via marginalising over an RTS solution
-    initial_rts, _aux = fpx.estimate_fixedpoint_via_fixedinterval(data, ssm, impl=impl)
-    initial_fps, _aux = fpx.estimate_fixedpoint_via_filter(data, ssm, impl=impl)
+    estimate = fpx.estimate_fixedpoint_via_fixedinterval(impl=impl)
+    initial_rts, _aux = estimate(data, ssm)
+    estimate = fpx.estimate_fixedpoint_via_filter(impl=impl)
+    initial_fps, _aux = estimate(data, ssm)
 
     # Check that all leaves match
     initial_rts = impl.rv_to_mvnorm(initial_rts)
@@ -124,8 +132,10 @@ def test_fixedpoint_smoother_matches_state_augmented_filter(impl):
 
     # Run a fixedpoint-smoother via state-augmented filtering
     # and via marginalising over an RTS solution
-    initial_rts, _aux = fpx.estimate_fixedpoint_via_filter(data, ssm, impl=impl)
-    initial_fps, _aux = fpx.estimate_fixedpoint(data, ssm, impl=impl)
+    estimate = fpx.estimate_fixedpoint_via_filter(impl=impl)
+    initial_rts, _aux = estimate(data, ssm)
+    estimate = fpx.estimate_fixedpoint(impl=impl)
+    initial_fps, _aux = estimate(data, ssm)
 
     # Check that all leaves match
     initial_rts = impl.rv_to_mvnorm(initial_rts)
@@ -155,8 +165,12 @@ def test_square_root_parametrisation_matches_conventional_parametrisation_for_fi
         ts, noise=1e-4, diffusion=1.0, impl=impl_sqrt
     )
 
-    rv_conv, _aux = fpx.estimate_filter_kalman(data, ssm_conv, impl=impl_conv)
-    rv_sqrt, _aux = fpx.estimate_filter_kalman(data, ssm_sqrt, impl=impl_sqrt)
+    estimate_conv = fpx.estimate_filter(impl=impl_conv)
+    estimate_sqrt = fpx.estimate_filter(impl=impl_sqrt)
+
+    rv_conv, _aux = estimate_conv(data, ssm_conv)
+    rv_sqrt, _aux = estimate_sqrt(data, ssm_sqrt)
+
     rv_conv = impl_conv.rv_to_mvnorm(rv_conv)
     rv_sqrt = impl_sqrt.rv_to_mvnorm(rv_sqrt)
 
