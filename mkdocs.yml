@@ -7,4 +7,9 @@ plugins:
       handlers:
         python:
           paths: [src]  # search packages in the src folder
-nav: [index.md]
+          options:
+            show_signature: true
+            show_signature_annotations: true
+
+nav:
+  - "API: fpx Package": index.md
