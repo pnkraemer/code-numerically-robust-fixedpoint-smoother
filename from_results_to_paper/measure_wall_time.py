@@ -1,12 +1,26 @@
 import pickle
 import pandas as pd
 
-filename = str(__file__)
-filename = filename.replace("from_results_to_paper", "results")
-filename = filename.replace(".py", "_n1000_d2.pkl")
+dirname = str(__file__)
+dirname = dirname.replace("from_results_to_paper", "results")
+dirname = dirname.replace(".py", "")
 
+filename = f"{dirname}/results.pkl"
 with open(filename, "rb") as f:
     results = pickle.load(f)
 
 df = pd.DataFrame(results)
-print(df)
+print()
+print()
+print()
+print()
+print(df.to_latex())
+print()
+print()
+print()
+print()
+print(df.T.to_latex())
+print()
+print()
+print()
+print()
