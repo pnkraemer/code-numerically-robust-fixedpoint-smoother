@@ -10,10 +10,10 @@ import argparse
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--num_runs", default=5)
-    parser.add_argument("--num_dims", default=2)
-    parser.add_argument("--num_steps", default=1_000)
-    parser.add_argument("--seed", default=1)
+    parser.add_argument("--num_runs", type=int, default=5)
+    parser.add_argument("--num_dims", type=int, default=2)
+    parser.add_argument("--num_steps", type=int, default=1_000)
+    parser.add_argument("--seed", type=int, default=1)
     args = parser.parse_args()
     print(args)
 
@@ -32,33 +32,39 @@ def main():
         sample = fpx.compute_stats_sample(impl=impl)
         data = sample_data(key, ssm=ssm, sample=sample)
 
+        # Compute a reference solution
+        estimate = jax.jit(fpx.compute_fixedpoint(impl=impl))
+        ref, _ = estimate(data, ssm)
+
         print("\nFixedpoint via filter")
         estimate = jax.jit(fpx.compute_fixedpoint_via_filter(impl=impl))
-        t = benchmark(estimate, ssm=ssm, data=data, num_runs=args.num_runs)
+        t = benchmark(estimate, ref=ref, ssm=ssm, data=data, num_runs=args.num_runs)
         print(f"\t {min(t):.1e}")
 
         print("\nFixedpoint via fixed-interval")
         estimate = jax.jit(fpx.compute_fixedpoint_via_fixedinterval(impl=impl))
-        t = benchmark(estimate, ssm=ssm, data=data, num_runs=args.num_runs)
+        t = benchmark(estimate, ref=ref, ssm=ssm, data=data, num_runs=args.num_runs)
         print(f"\t {min(t):.1e}")
 
         print("\nFixedpoint via recursion")
         estimate = jax.jit(fpx.compute_fixedpoint(impl=impl))
-        t = benchmark(estimate, ssm=ssm, data=data, num_runs=args.num_runs)
+        t = benchmark(estimate, ref=ref, ssm=ssm, data=data, num_runs=args.num_runs)
         print(f"\t {min(t):.1e}")
 
         print()
 
 
-def benchmark(fixedpoint, *, data, ssm, num_runs):
-    # Create some data
-
-    # Run a fixedpoint-smoother via state-augmented filtering
-    # and via marginalising over an RTS solution
-    # Execute once to pre-compile
+def benchmark(fixedpoint, *, ref, data, ssm, num_runs):
+    # Execute once to pre-compile (and to compute errors)
     initial_rts, _ = fixedpoint(data, ssm)
     if jnp.any(jnp.isnan(initial_rts.mean)):
         print("NaN detected")
+        return [-1.0]
+
+    # If the values don't match, abort
+    if not jnp.allclose(initial_rts.mean, ref.mean, atol=1e-3, rtol=1e-3):
+        print("Values do not match the reference")
+        print(f"{jnp.abs(initial_rts.mean - ref.mean)}")
         return [-1.0]
 
     ts = []
