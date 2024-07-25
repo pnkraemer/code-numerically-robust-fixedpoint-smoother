@@ -23,7 +23,7 @@ def test_filter_estimates_trajectory_accurately(impl):
 
     # Create some data
     latent, data = _sample(ssm=ssm, impl=impl)
-    assert latent.shape == (len(ts) - 1, 4)
+    assert latent.shape == (len(ts), 4)
     assert data.shape == (len(ts) - 1, 2)
 
     # Run a Kalman filter
@@ -43,7 +43,7 @@ def test_smoother_more_accurate_than_filter(impl):
 
     # Create some data
     latent, data = _sample(ssm=ssm, impl=impl)
-    assert latent.shape == (len(ts) - 1, 4)
+    assert latent.shape == (len(ts), 4)
     assert data.shape == (len(ts) - 1, 2)
 
     # Run a Kalman filter
@@ -69,7 +69,7 @@ def test_smoother_more_accurate_than_filter(impl):
     # The filter-solution does not include the initial value
     # The data vectors match the filter solution
     m_f = aux["filter_distributions"].mean[:-1]
-    y = latent[:-1]
+    y = latent[1:-1]
     m_s = marginals.mean[1:]
 
     # Assert the filter is better than the noise
@@ -89,7 +89,7 @@ def test_state_augmented_filter_matches_rts_smoother_at_initial_state(impl):
 
     # Create some data
     latent, data = _sample(ssm=ssm, impl=impl)
-    assert latent.shape == (len(ts) - 1, 4)
+    assert latent.shape == (len(ts), 4)
     assert data.shape == (len(ts) - 1, 2)
 
     # Run a fixedpoint-smoother via state-augmented filtering
@@ -103,7 +103,7 @@ def test_state_augmented_filter_matches_rts_smoother_at_initial_state(impl):
     initial_rts = impl.rv_to_mvnorm(initial_rts)
     initial_fps = impl.rv_to_mvnorm(initial_fps)
     for x1, x2 in zip(jax.tree.leaves(initial_fps), jax.tree.leaves(initial_rts)):
-        assert jnp.allclose(x1, x2, atol=1e-4)
+        assert allclose(x1, x2)
 
 
 @pytest_cases.parametrize_with_cases("impl", cases=".")
@@ -114,7 +114,7 @@ def test_fixedpoint_smoother_matches_state_augmented_filter(impl):
 
     # Create some data
     latent, data = _sample(ssm=ssm, impl=impl)
-    assert latent.shape == (len(ts) - 1, 4)
+    assert latent.shape == (len(ts), 4)
     assert data.shape == (len(ts) - 1, 2)
 
     # Run a fixedpoint-smoother via state-augmented filtering
@@ -128,7 +128,7 @@ def test_fixedpoint_smoother_matches_state_augmented_filter(impl):
     initial_rts = impl.rv_to_mvnorm(initial_rts)
     initial_fps = impl.rv_to_mvnorm(initial_fps)
     for x1, x2 in zip(jax.tree.leaves(initial_fps), jax.tree.leaves(initial_rts)):
-        assert jnp.allclose(x1, x2, atol=1e-4)
+        assert allclose(x1, x2)
 
 
 def test_square_root_parametrisation_matches_conventional_parametrisation_for_filter():
@@ -140,7 +140,7 @@ def test_square_root_parametrisation_matches_conventional_parametrisation_for_fi
 
     # Sample using the conventional parametrisation
     latent, data = _sample(ssm=ssm_conv, impl=impl_conv)
-    assert latent.shape == (len(ts) - 1, 4)
+    assert latent.shape == (len(ts), 4)
     assert data.shape == (len(ts) - 1, 2)
 
     # Replicate with sqrt parametrisation
@@ -159,18 +159,19 @@ def test_square_root_parametrisation_matches_conventional_parametrisation_for_fi
     rv_sqrt = impl_sqrt.rv_to_mvnorm(rv_sqrt)
 
     for x1, x2 in zip(jax.tree.leaves(rv_conv), jax.tree.leaves(rv_sqrt)):
-        assert jnp.allclose(x1, x2)
+        assert allclose(x1, x2)
 
 
-# todo: use our own allclose which depends on the floating-point accuracy?
+def allclose(a, b):
+    atol = jnp.sqrt(jnp.finfo(a.dtype).eps)
+    rtol = jnp.sqrt(jnp.finfo(a.dtype).eps)
+    return jnp.allclose(a, b, atol=atol, rtol=rtol)
 
 
 def _sample(*, ssm, impl):
     key = jax.random.PRNGKey(seed=1)
-    key, subkey = jax.random.split(key, num=2)
-    x0 = impl.rv_sample(subkey, ssm.init)
     sample = fpx.compute_stats_sample(impl=impl)
-    _, (latent, data) = sample(key, x0, ssm.dynamics)
+    (latent, data) = sample(key, ssm)
     return latent, data
 
 
