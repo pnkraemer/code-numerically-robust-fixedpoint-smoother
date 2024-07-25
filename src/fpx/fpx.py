@@ -3,7 +3,7 @@
 import dataclasses
 import jax.numpy as jnp
 import jax
-from typing import Callable, Any, TypeVar, Generic, NamedTuple, Union
+from typing import Callable, Any, TypeVar, Generic, NamedTuple
 
 
 class NormalChol(NamedTuple):
@@ -20,7 +20,8 @@ class NormalCov(NamedTuple):
     cov: jax.Array
 
 
-T = TypeVar("T", bound=Union[NormalChol, NormalCov])
+T = TypeVar("T", bound=NormalChol | NormalCov)
+"""A type-variable to indicate random-variable types."""
 
 
 @dataclasses.dataclass
@@ -372,7 +373,7 @@ def ssm_car_tracking_acceleration(
     return SSM(init=x0, dynamics=dynamics)
 
 
-def sequence_sample(impl: Impl[T]) -> Callable:
+def compute_stats_sample(impl: Impl[T]) -> Callable:
     """Sample from a state-space model (sequentially)."""
 
     def sample(key, x0: jax.Array, dynamics: SSMDynamics[T]):
@@ -393,7 +394,7 @@ def sequence_sample(impl: Impl[T]) -> Callable:
     return sample
 
 
-def sequence_marginalize(impl: Impl[T], reverse: bool) -> Callable:
+def compute_stats_marginalize(impl: Impl[T], reverse: bool) -> Callable:
     """Marginalize a sequence of conditionals (sequentially)."""
 
     def marginalize(init: T, cond: SSMCond[T]) -> T:
@@ -413,7 +414,7 @@ def sequence_marginalize(impl: Impl[T], reverse: bool) -> Callable:
 #  because it saves the initialisation step in all algorithm boxes!
 
 
-def estimate_fixedpoint(impl: Impl[T]) -> Callable:
+def compute_fixedpoint(impl: Impl[T]) -> Callable:
     """Estimate a solution of the fixed-point smoothing problem."""
 
     def estimate(data: jax.Array, ssm: SSM[T]):
@@ -439,16 +440,16 @@ def estimate_fixedpoint(impl: Impl[T]) -> Callable:
     return estimate
 
 
-def estimate_fixedpoint_via_fixedinterval(impl: Impl[T]) -> Callable:
+def compute_fixedpoint_via_fixedinterval(impl: Impl[T]) -> Callable:
     """Estimate a solution of the fixed-point smoothing problem.
 
     Calls a fixed-interval smoother internally.
     """
-    estimate_interval = estimate_fixedinterval(impl=impl)
-    marginalize = sequence_marginalize(impl=impl, reverse=True)
+    compute_interval = compute_fixedinterval(impl=impl)
+    marginalize = compute_stats_marginalize(impl=impl, reverse=True)
 
     def estimate(data: jax.Array, ssm: SSM[T]):
-        (terminal, conds), aux = estimate_interval(data=data, ssm=ssm)
+        (terminal, conds), aux = compute_interval(data=data, ssm=ssm)
         marginals = marginalize(terminal, conds)
         initial_rts = jax.tree.map(lambda s: s[0, ...], marginals)
         return initial_rts, {}
@@ -456,7 +457,7 @@ def estimate_fixedpoint_via_fixedinterval(impl: Impl[T]) -> Callable:
     return estimate
 
 
-def estimate_fixedinterval(impl: Impl[T]) -> Callable:
+def compute_fixedinterval(impl: Impl[T]) -> Callable:
     """Estimate a solution of the fixed-interval smoothing problem."""
 
     def estimate(data: jax.Array, ssm: SSM[T]):
@@ -483,16 +484,16 @@ def estimate_fixedinterval(impl: Impl[T]) -> Callable:
     return estimate
 
 
-def estimate_fixedpoint_via_filter(impl: Impl[T]) -> Callable:
+def compute_fixedpoint_via_filter(impl: Impl[T]) -> Callable:
     """Estimate a solution of the fixed-point smoothing problem.
 
     Augments the state-space model and calls a filter internally.
     """
-    estimate_fi = estimate_filter(impl=impl)
+    compute_fi = compute_filter(impl=impl)
 
     def estimate(data: jax.Array, ssm: SSM[T]):
         ssm_augment = _ssm_augment_fixedpoint(ssm, impl=impl)
-        terminal_filter, aux = estimate_fi(data, ssm_augment)
+        terminal_filter, aux = compute_fi(data, ssm_augment)
         rv_reduced = impl.rv_fixedpoint_select(terminal_filter)
         return rv_reduced, {}
 
@@ -505,7 +506,7 @@ def _ssm_augment_fixedpoint(ssm: SSM[T], impl: Impl[T]) -> SSM[T]:
     return SSM(init=init, dynamics=dynamics)
 
 
-def estimate_filter(impl: Impl[T]) -> Callable:
+def compute_filter(impl: Impl[T]) -> Callable:
     """Estimate a solution of the filtering problem."""
 
     def estimate(data: jax.Array, ssm: SSM[T]):
