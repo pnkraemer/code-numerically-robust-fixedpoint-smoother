@@ -65,6 +65,7 @@ class Impl(Generic[T]):
     rv_fixedpoint_select: Callable[[T], T]
     conditional_parametrize: Callable[[jax.Array, Cond[T]], T]
     conditional_merge: Callable[[Cond[T], Cond[T]], Cond[T]]
+    conditional_from_identity: Callable[[T], Cond[T]]
     dynamics_fixedpoint_augment: Callable[[Dynamics[T]], Dynamics[T]]
     marginalize: Callable[[T, Cond[T]], T]
     bayes_update: Callable[[T, Cond[T]], tuple[T, Cond[T]]]
@@ -116,6 +117,11 @@ def impl_cholesky_based() -> Impl[CholNormal]:
         chol_T = jnp.linalg.qr(jnp.concatenate([C2.T @ A1.T, C1.T]), mode="r")
         return Cond(A, CholNormal(m, chol_T.T))
 
+    def conditional_from_identity(like: CholNormal) -> Cond[CholNormal]:
+        eye = jnp.eye(len(like.mean))
+        noise = jax.tree.map(jnp.zeros_like, like)
+        return Cond(eye, noise)
+
     def rv_fixedpoint_augment(rv: CholNormal) -> CholNormal:
         mean, chol = rv
         mean_augmented = jnp.concatenate([mean, mean], axis=0)
@@ -160,6 +166,7 @@ def impl_cholesky_based() -> Impl[CholNormal]:
         conditional_merge=conditional_merge,
         marginalize=marginalize,
         bayes_update=bayes_update,
+        conditional_from_identity=conditional_from_identity,
     )
 
 
@@ -253,6 +260,11 @@ def impl_covariance_based() -> Impl[CovNormal]:
         C = A1 @ C2 @ A1.T + C1
         return Cond(A, CovNormal(m, C))
 
+    def conditional_from_identity(like: CovNormal) -> Cond[CovNormal]:
+        eye = jnp.eye(len(like.mean))
+        noise = jax.tree.map(jnp.zeros_like, like)
+        return Cond(eye, noise)
+
     return Impl(
         rv_to_mvnorm=lambda rv: (rv.mean, rv.cov),
         rv_from_mvnorm=lambda m, c: CovNormal(m, c),
@@ -264,6 +276,7 @@ def impl_covariance_based() -> Impl[CovNormal]:
         rv_fixedpoint_select=rv_fixedpoint_select,
         dynamics_fixedpoint_augment=dynamics_fixedpoint_augment,
         conditional_merge=conditional_merge,
+        conditional_from_identity=conditional_from_identity,
     )
 
 
@@ -398,7 +411,7 @@ def sequence_marginalize(init, cond: Cond[T], impl: Impl[T], reverse: bool) -> T
 
 
 @functools.partial(jax.jit, static_argnames=["impl"])
-def estimate_fixedpoint(data: jax.Array, ssm: SSM[T], *, impl: Impl[T]):
+def estimate_fixedpoint(data: jax.Array, ssm: SSM[T], impl: Impl[T]):
     """Estimate a solution of the fixed-point smoothing problem."""
 
     def step_fun(state_k, inputs: tuple[jax.Array, Dynamics]) -> tuple:
@@ -415,20 +428,14 @@ def estimate_fixedpoint(data: jax.Array, ssm: SSM[T], *, impl: Impl[T]):
         state_new = impl.conditional_parametrize(y_k, gain)
         return (state_new, backward), ()
 
-    x0 = ssm.init
-    # todo: move this information into the Impl?
-    #  if we don't, all random variable types need an attribute mean().
-    #  This is fine for now, but feels a bit hacky.
-    cond = Cond(jnp.eye(len(x0.mean)), jax.tree.map(jnp.zeros_like, x0))
-    init, xs = (x0, cond), (data, ssm.dynamics)
+    cond = impl.conditional_from_identity(ssm.init)
+    init, xs = (ssm.init, cond), (data, ssm.dynamics)
     (rv, cond), _ = jax.lax.scan(step_fun, xs=xs, init=init)
     return impl.marginalize(rv, cond), {}
 
 
 @functools.partial(jax.jit, static_argnames=["impl"])
-def estimate_fixedpoint_via_fixedinterval(
-    data: jax.Array, ssm: SSM[T], *, impl: Impl[T]
-):
+def estimate_fixedpoint_via_fixedinterval(data: jax.Array, ssm: SSM[T], impl: Impl[T]):
     """Estimate a solution of the fixed-point smoothing problem.
 
     Calls a fixed-interval smoother internally.
@@ -441,7 +448,7 @@ def estimate_fixedpoint_via_fixedinterval(
 
 
 @functools.partial(jax.jit, static_argnames=["impl"])
-def estimate_fixedinterval(data: jax.Array, ssm: SSM[T], *, impl: Impl[T]):
+def estimate_fixedinterval(data: jax.Array, ssm: SSM[T], impl: Impl[T]):
     """Estimate a solution of the fixed-interval smoothing problem."""
 
     def step_fun(state_k: T, inputs: tuple[jax.Array, Dynamics]) -> tuple[T, Any]:
@@ -464,7 +471,7 @@ def estimate_fixedinterval(data: jax.Array, ssm: SSM[T], *, impl: Impl[T]):
 
 
 @functools.partial(jax.jit, static_argnames=["impl"])
-def estimate_fixedpoint_via_filter(data: jax.Array, ssm: SSM[T], *, impl: Impl[T]):
+def estimate_fixedpoint_via_filter(data: jax.Array, ssm: SSM[T], impl: Impl[T]):
     """Estimate a solution of the fixed-point smoothing problem.
 
     Augments the state-space model and calls a filter internally.
@@ -482,7 +489,7 @@ def _ssm_augment_fixedpoint(ssm: SSM[T], impl: Impl[T]) -> SSM[T]:
 
 
 @functools.partial(jax.jit, static_argnames=["impl"])
-def estimate_filter_kalman(data: jax.Array, ssm: SSM[T], *, impl: Impl[T]):
+def estimate_filter_kalman(data: jax.Array, ssm: SSM[T], impl: Impl[T]):
     """Estimate a solution of the filtering problem."""
 
     def step_fun(state_k: T, inputs: tuple[jax.Array, Dynamics]) -> tuple[T, Any]:
