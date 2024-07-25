@@ -157,7 +157,7 @@ def impl_cholesky_based() -> Impl[NormalChol]:
         return NormalChol(mean_new, cholesky_new)
 
     return Impl(
-        name="Cholesky-based implementation",
+        name="Cholesky-based",
         rv_from_mvnorm=rv_from_mvnorm,
         rv_to_mvnorm=rv_to_mvnorm,
         rv_sample=rv_sample,
@@ -268,7 +268,7 @@ def impl_covariance_based() -> Impl[NormalCov]:
         return SSMCond(eye, noise)
 
     return Impl(
-        name="Covariance-based implementation",
+        name="Covariance-based",
         rv_to_mvnorm=lambda rv: (rv.mean, rv.cov),
         rv_from_mvnorm=lambda m, c: NormalCov(m, c),
         rv_sample=rv_sample,
