@@ -62,7 +62,8 @@ def test_smoother_more_accurate_than_filter(impl):
 
     # todo: make sequence_marginalize also return a Callable?
     # todo: same for sequence_sample?
-    marginals = fpx.sequence_marginalize(terminal, conds, impl=impl, reverse=True)
+    marginalize = fpx.sequence_marginalize(impl=impl, reverse=True)
+    marginals = marginalize(terminal, conds)
 
     # Assert that the final states of filter and smoother coincide
     t1 = impl.rv_to_mvnorm(terminal)

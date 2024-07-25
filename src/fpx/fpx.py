@@ -390,15 +390,18 @@ def sequence_sample(key, x0: jax.Array, dynamics: Dynamics[T], impl: Impl[T]):
     return jax.lax.scan(scan_fun, xs=dynamics, init=(key, x0))
 
 
-def sequence_marginalize(init, cond: Cond[T], impl: Impl[T], reverse: bool) -> T:
+def sequence_marginalize(impl: Impl[T], reverse: bool) -> Callable:
     """Marginalize a sequence of conditionals (sequentially)."""
 
-    def scan_fun(x, cond_k: Cond[T]):
-        marg = impl.marginalize(x, cond_k)
-        return marg, marg
+    def marginalize(init: T, cond: Cond[T]) -> T:
+        def scan_fun(x, cond_k: Cond[T]):
+            marg = impl.marginalize(x, cond_k)
+            return marg, marg
 
-    _, all_ = jax.lax.scan(scan_fun, xs=cond, init=init, reverse=reverse)
-    return all_
+        _, all_ = jax.lax.scan(scan_fun, xs=cond, init=init, reverse=reverse)
+        return all_
+
+    return marginalize
 
 
 # todo: this code assumes $p(x_0 \mid y_{1:K})$,
@@ -439,10 +442,11 @@ def estimate_fixedpoint_via_fixedinterval(impl: Impl[T]) -> Callable:
     Calls a fixed-interval smoother internally.
     """
     estimate_interval = estimate_fixedinterval(impl=impl)
+    marginalize = sequence_marginalize(impl=impl, reverse=True)
 
     def estimate(data: jax.Array, ssm: SSM[T]):
         (terminal, conds), aux = estimate_interval(data=data, ssm=ssm)
-        marginals = sequence_marginalize(terminal, conds, impl=impl, reverse=True)
+        marginals = marginalize(terminal, conds)
         initial_rts = jax.tree.map(lambda s: s[0, ...], marginals)
         return initial_rts, {}
 
