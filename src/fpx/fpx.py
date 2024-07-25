@@ -58,6 +58,7 @@ jax.tree_util.register_pytree_node(
 class Impl(Generic[T]):
     """Implementation of estimation in state-space models."""
 
+    name: str
     rv_from_mvnorm: Callable[[jax.Array, jax.Array], T]
     rv_to_mvnorm: Callable[[T], tuple[jax.Array, jax.Array]]
     rv_sample: Callable[[Any, T], jax.Array]
@@ -156,6 +157,7 @@ def impl_cholesky_based() -> Impl[NormalChol]:
         return NormalChol(mean_new, cholesky_new)
 
     return Impl(
+        name="Cholesky-based implementation",
         rv_from_mvnorm=rv_from_mvnorm,
         rv_to_mvnorm=rv_to_mvnorm,
         rv_sample=rv_sample,
@@ -266,6 +268,7 @@ def impl_covariance_based() -> Impl[NormalCov]:
         return SSMCond(eye, noise)
 
     return Impl(
+        name="Covariance-based implementation",
         rv_to_mvnorm=lambda rv: (rv.mean, rv.cov),
         rv_from_mvnorm=lambda m, c: NormalCov(m, c),
         rv_sample=rv_sample,
@@ -376,7 +379,7 @@ def ssm_car_tracking_acceleration(
 def compute_stats_sample(impl: Impl[T]) -> Callable:
     """Sample from a state-space model (sequentially)."""
 
-    def sample(key, x0: jax.Array, dynamics: SSMDynamics[T]):
+    def sample(key, ssm: SSM[T]):
         def scan_fun(x, dynamics_k: SSMDynamics):
             key_k, sample_k = x
 
@@ -389,7 +392,12 @@ def compute_stats_sample(impl: Impl[T]) -> Callable:
             sample_obs_k = impl.rv_sample(subkey_k, rv_obs)
             return (key_k, sample_k), (sample_k, sample_obs_k)
 
-        return jax.lax.scan(scan_fun, xs=dynamics, init=(key, x0))
+        key, subkey = jax.random.split(key, num=2)
+        x0 = impl.rv_sample(subkey, ssm.init)
+
+        key, subkey = jax.random.split(key, num=2)
+        _, (latents, obs) = jax.lax.scan(scan_fun, xs=ssm.dynamics, init=(subkey, x0))
+        return jnp.concatenate([x0[None, ...], latents], axis=0), obs
 
     return sample
 

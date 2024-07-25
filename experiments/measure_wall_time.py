@@ -1,83 +1,80 @@
+"""Measure the wall time of fixedpoint estimation via differnet methods."""
+
 import jax.numpy as jnp
 import jax
 import time
 
 from fpx import fpx
+import argparse
 
 
-def main(seed_: int, implementation: fpx.Impl, /, fixedpoint, nruns, ndim, nsteps):
-    # Set up a test problem
-    ts = jnp.linspace(0, 1, num=nsteps)
-    ssm = fpx.ssm_car_tracking_acceleration(
-        ts, noise=1e-4, diffusion=1.0, impl=impl, dim=ndim
-    )
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--num_runs", default=5)
+    parser.add_argument("--num_dims", default=2)
+    parser.add_argument("--num_steps", default=1_000)
+    parser.add_argument("--seed", default=1)
+    args = parser.parse_args()
+    print(args)
 
+    key = jax.random.PRNGKey(args.seed)
+
+    for impl in [fpx.impl_covariance_based(), fpx.impl_cholesky_based()]:
+        print()
+        print(impl.name)
+        print(f"{'-'*len(impl.name)}")
+
+        # Set up a test problem
+        ts = jnp.linspace(0, 1, num=args.num_steps)
+        ssm = fpx.ssm_car_tracking_acceleration(
+            ts, noise=1e-4, diffusion=1.0, impl=impl, dim=args.num_dims
+        )
+        sample = fpx.compute_stats_sample(impl=impl)
+        data = sample_data(key, ssm=ssm, sample=sample)
+
+        print("\nFixedpoint via filter")
+        estimate = jax.jit(fpx.compute_fixedpoint_via_filter(impl=impl))
+        t = benchmark(estimate, ssm=ssm, data=data, num_runs=args.num_runs)
+        print(f"\t {min(t):.1e}")
+
+        print("\nFixedpoint via fixed-interval")
+        estimate = jax.jit(fpx.compute_fixedpoint_via_fixedinterval(impl=impl))
+        t = benchmark(estimate, ssm=ssm, data=data, num_runs=args.num_runs)
+        print(f"\t {min(t):.1e}")
+
+        print("\nFixedpoint via recursion")
+        estimate = jax.jit(fpx.compute_fixedpoint(impl=impl))
+        t = benchmark(estimate, ssm=ssm, data=data, num_runs=args.num_runs)
+        print(f"\t {min(t):.1e}")
+
+        print()
+
+
+def benchmark(fixedpoint, *, data, ssm, num_runs):
     # Create some data
-    key = jax.random.PRNGKey(seed=seed_)
-    key, subkey = jax.random.split(key, num=2)
-    x0 = impl.rv_sample(subkey, ssm.init)
-    _, (latent, data) = fpx.sequence_sample(key, x0, ssm.dynamics, impl=implementation)
 
     # Run a fixedpoint-smoother via state-augmented filtering
     # and via marginalising over an RTS solution
     # Execute once to pre-compile
-    initial_rts, _ = fixedpoint(data, ssm, impl=implementation)
+    initial_rts, _ = fixedpoint(data, ssm)
     if jnp.any(jnp.isnan(initial_rts.mean)):
         print("NaN detected")
         return [-1.0]
 
     ts = []
-    for _ in range(nruns):
+    for _ in range(num_runs):
         t0 = time.perf_counter()
-        initial_rts, _ = fixedpoint(data, ssm, impl=implementation)
+        initial_rts, _ = fixedpoint(data, ssm)
         initial_rts.mean.block_until_ready()
         t1 = time.perf_counter()
         ts.append(t1 - t0)
     return ts
 
 
-if __name__ == "__main__":
-    seed = 3  # todo: check 100 seeds and count the number of NaN runs for stability
-    num_runs = 3
-    num_dims = 2
-    num_steps = 1000  # todo: increase num_steps to plot stability and costs
+def sample_data(key, *, ssm, sample):
+    (latent, data) = sample(key, ssm)
+    return data
 
-    for seed in range(10):
-        for label, impl in [
-            ("Covariance-based", fpx.impl_covariance_based()),
-            ("Cholesky-based", fpx.impl_cholesky_based()),
-        ]:
-            print()
-            print(f"\n{label} code (fastest of n={num_runs} runs):")
-            print("-----------------------------------------------------")
-            print("Via filter:")
-            t = main(
-                seed,
-                impl,
-                fixedpoint=fpx.estimate_fixedpoint_via_filter,
-                nruns=num_runs,
-                ndim=num_dims,
-                nsteps=num_steps,
-            )
-            print("\t", min(t))
-            print("Via fixed-interval smoother:")
-            t = main(
-                seed,
-                impl,
-                fixedpoint=fpx.estimate_fixedpoint_via_fixedinterval,
-                nruns=num_runs,
-                ndim=num_dims,
-                nsteps=num_steps,
-            )
-            print("\t", min(t))
-            print("Via proper recursion:")
-            t = main(
-                seed,
-                impl,
-                fixedpoint=fpx.estimate_fixedpoint,
-                nruns=num_runs,
-                ndim=num_dims,
-                nsteps=num_steps,
-            )
-            print("\t", min(t))
-            print()
+
+if __name__ == "__main__":
+    main()
