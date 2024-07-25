@@ -10,6 +10,5 @@ plugins:
           options:
             show_signature: true
             show_signature_annotations: true
-
 nav:
-  - "API: fpx Package": index.md
+  - 'API: fpx Package': index.md

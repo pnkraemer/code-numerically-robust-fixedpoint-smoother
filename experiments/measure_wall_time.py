@@ -5,7 +5,6 @@ import time
 from fpx import fpx
 
 
-
 def main(seed_: int, implementation: fpx.Impl, /, fixedpoint, nruns, ndim, nsteps):
     # Set up a test problem
     ts = jnp.linspace(0, 1, num=nsteps)
