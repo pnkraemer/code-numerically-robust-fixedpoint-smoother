@@ -36,12 +36,12 @@ def test_estimators_accept_callbacks(compute_fun):
     assert latent.shape == (len(ts), 4)
     assert data.shape == (len(ts) - 1, 2)
 
-    # Sanity check
+    # Sanity check: aux is always a dict, and callbacks are optional
     estimate = compute_fun(impl=impl)
     _, aux = estimate(data, ssm)
     assert isinstance(aux, dict)
 
-    # Callback
+    # Test: accepts callback and returns info at top-level
     def callback(*args):
         return {"size": jax.flatten_util.ravel_pytree(args)[0].size}
 

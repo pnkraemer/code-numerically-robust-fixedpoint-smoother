@@ -429,6 +429,7 @@ def compute_fixedpoint(impl: Impl[T], cb: Callable | None = None) -> Callable:
     def estimate(data: jax.Array, ssm: SSM[T]):
         def step_fun(state_k, inputs: tuple[jax.Array, SSMDynamics]) -> tuple:
             # Read
+            state_k, _info = state_k
             (y_k, model_k) = inputs
 
             # Predict
@@ -441,11 +442,13 @@ def compute_fixedpoint(impl: Impl[T], cb: Callable | None = None) -> Callable:
             state_new = impl.conditional_parametrize(y_k, gain)
 
             info = cb(state_new, backward) if cb is not None else {}
-            return (state_new, backward), info
+            return ((state_new, backward), info), {}
 
         cond = impl.conditional_from_identity(ssm.init)
         init, xs = (ssm.init, cond), (data, ssm.dynamics)
-        (rv, cond), aux = jax.lax.scan(step_fun, xs=xs, init=init)
+
+        info = cb(*init) if cb is not None else {}
+        ((rv, cond), aux), _ = jax.lax.scan(step_fun, xs=xs, init=(init, info))
         return impl.marginalize(rv, cond), aux
 
     return estimate
@@ -527,6 +530,8 @@ def compute_filter(impl: Impl[T], cb: Callable | None = None) -> Callable:
 
     def estimate(data: jax.Array, ssm: SSM[T]):
         def step_fun(state_k: T, inputs: tuple[jax.Array, SSMDynamics]):
+            state_k, _info = state_k
+
             # Read
             (y_k, model_k) = inputs
 
@@ -537,11 +542,15 @@ def compute_filter(impl: Impl[T], cb: Callable | None = None) -> Callable:
             _rv, cond = impl.bayes_update(state_kplus, model_k.observation)
             state_new = impl.conditional_parametrize(y_k, cond)
 
-            info = cb(state_new) if cb is not None else {}
-            return state_new, info
+            info_k = cb(state_new) if cb is not None else {}
+            return (state_new, info_k), {}
 
         x0 = ssm.init
-        solution, aux = jax.lax.scan(step_fun, xs=(data, ssm.dynamics), init=x0)
+        info = cb(x0) if cb is not None else {}
+
+        (solution, aux), _ = jax.lax.scan(
+            step_fun, xs=(data, ssm.dynamics), init=(x0, info)
+        )
         return solution, aux
 
     return estimate
