@@ -5,6 +5,10 @@ import jax.numpy as jnp
 import jax
 import jax.flatten_util
 from typing import Callable, Any, TypeVar, Generic, NamedTuple
+import probdiffeq.ivpsolvers
+from probdiffeq.impl import impl as impl_probdiffeq
+
+impl_probdiffeq.select("scalar")
 
 
 class NormalChol(NamedTuple):
@@ -219,7 +223,11 @@ def impl_covariance_based() -> Impl[NormalCov]:
         s = cond.A @ rv.mean + cond.noise.mean
         S = cond.A @ rv.cov @ cond.A.T + cond.noise.cov
 
-        gain = jnp.linalg.solve(S.T, cond.A @ rv.cov).T
+        # Update via Cholesky decomposition
+        # todo: should we use solve() instead?
+        s_chol = jax.scipy.linalg.cho_factor(S)
+        gain = jax.scipy.linalg.cho_solve(s_chol, cond.A @ rv.cov).T
+
         mean_new = rv.mean - gain @ s
         cov_new = rv.cov - gain @ S @ gain.T
         return NormalCov(s, S), SSMCond(gain, NormalCov(mean_new, cov_new))
@@ -336,24 +344,33 @@ def ssm_car_tracking_velocity(
     return SSM(init=x0, dynamics=jax.vmap(transition)(jnp.diff(ts)))
 
 
-def ssm_ode(ts, /, impl: Impl[T], diffusion=1.0) -> SSM[T]:
-    def transition(dt) -> SSMDynamics:
-        A = jnp.asarray([[1.0, dt], [0, 1.0]])
-        q = jnp.asarray([0.0, 0.0])
-        Q = diffusion**2 * jnp.asarray([[dt**3 / 3, dt**2 / 2], [dt**2 / 2, dt]])
-        H = jnp.asarray([[1.0, -1.0]])
-        r = jnp.asarray([0.0])
-        R = jnp.asarray([[0.0]]) + 1e-10
+def ssm_seventh_order_wiener_derivative(ts, /, impl: Impl[T]) -> SSM[T]:
+    prior = probdiffeq.ivpsolvers.prior_ibm_discrete(ts, num_derivatives=7)
+    init = prior.init
+    inintmean = init.mean.at[0].set(1.0)
+    cov = init.cholesky @ init.cholesky.T
+    cov = cov.at[0, 0].set(1e-12)
 
-        rv_q = impl.rv_from_mvnorm(q, Q)
-        rv_r = impl.rv_from_mvnorm(r, R)
-        return SSMDynamics(latent=SSMCond(A, rv_q), observation=SSMCond(H, rv_r))
+    init = impl.rv_from_mvnorm(inintmean, cov)
+    A = prior.conditional.matmul
+    q = prior.conditional.noise.mean
+    Q = prior.conditional.noise.cholesky
+    noise = impl.rv_from_mvnorm(q, jax.vmap(lambda s: s @ s.T)(Q))
 
-    m0 = jnp.ones((2,))
-    C0 = jnp.eye(2)
-    x0 = impl.rv_from_mvnorm(m0, C0)
-
-    return SSM(init=x0, dynamics=jax.vmap(transition)(jnp.diff(ts)))
+    H = jnp.zeros((1, A.shape[1]))
+    H = H.at[0, 0].set(1.0)
+    r = jnp.zeros((1,))
+    R = jnp.eye(1)
+    H = jnp.stack([H] * len(ts[:-1]))
+    r = jnp.stack([r] * len(ts[:-1]))
+    R = jnp.stack([R] * len(ts[:-1]))
+    return SSM(
+        init=init,
+        dynamics=SSMDynamics(
+            latent=SSMCond(A, noise),
+            observation=SSMCond(H, jax.vmap(impl.rv_from_mvnorm)(r, R)),
+        ),
+    )
 
 
 def ssm_car_tracking_acceleration(
