@@ -22,12 +22,17 @@ def main():
         return xs[2] + 2 * xs[1] / t + xs[0] / t**4
 
     # Build a state-space model
+    ts = jnp.linspace(t0, t1, endpoint=True, num=50)
     num = 7
     impl = fpx.impl_cholesky_based()
-    ts = jnp.linspace(t0, t1, endpoint=True, num=50)
     init = model_init(impl=impl, num=num)
     latent = model_latent(ts, impl=impl, num=num)
-    constraint = model_constraint(ts, vf=vector_field, impl=impl, num=num)
+
+    # Linearize
+    x_and_dx = [1.0] * (num + 1)
+    x_flat, unflatten = jax.flatten_util.ravel_pytree(x_and_dx)
+    xs = jnp.stack([x_flat] * len(ts), axis=0)
+    constraint = model_constraint(ts, xs, vector_field, unflatten=unflatten, impl=impl)
 
     # Replace the final constraint with the BCond
     constraint = model_constraint_replace_y1(y1, cond=constraint, impl=impl, num=num)
@@ -96,23 +101,18 @@ def model_latent(ts, *, impl, num) -> fpx.SSMCond:
     return ssm.dynamics.latent
 
 
-def model_constraint(ts, *, vf, impl, num) -> fpx.SSMCond:
-    # todo: if we also vectorise over x_flat and pass this as an input,
-    #  we automatically handle nonlinear problems
-    x_and_dx = [1.0] * (num + 1)
-    x_flat, unflatten = jax.flatten_util.ravel_pytree(x_and_dx)
-
+def model_constraint(ts, xs, vf, *, unflatten, impl) -> fpx.SSMCond:
     def vf_wrapped(t, xflat):
         return vf(t, *unflatten(xflat))
 
-    def linearized(t) -> fpx.SSMCond:
+    def linearized(t, x_flat) -> fpx.SSMCond:
         H = jax.jacfwd(vf_wrapped, argnums=1)(t, x_flat)
         h = vf_wrapped(t, x_flat)[None]
         h = h - H @ x_flat
         noise = impl.rv_from_sqrtnorm(h, 0 * jnp.eye(1))
         return fpx.SSMCond(H[None], noise=noise)
 
-    return jax.vmap(linearized)(ts)
+    return jax.vmap(linearized)(ts, xs)
 
 
 def model_constraint_replace_y1(y1, cond: fpx.SSMCond, impl, num) -> fpx.SSMCond:
