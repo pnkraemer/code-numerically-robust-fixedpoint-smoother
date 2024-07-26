@@ -5,7 +5,8 @@ import pandas as pd
 from fpx import eval_utils
 
 # Load the results
-filename = eval_utils.filename_results(__file__, replace="from_results_to_paper")
+dirname = eval_utils.matching_directory(__file__, replace="from_results_to_paper")
+filename = f"{dirname}/results.pkl"
 with open(filename, "rb") as f:
     results = pickle.load(f)
 
