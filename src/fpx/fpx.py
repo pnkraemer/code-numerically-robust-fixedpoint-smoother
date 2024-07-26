@@ -65,6 +65,7 @@ class Impl(Generic[T]):
     """Implementation of estimation in state-space models."""
 
     name: str
+    rv_from_sqrtnorm: Callable[[jax.Array, jax.Array], T]
     rv_from_mvnorm: Callable[[jax.Array, jax.Array], T]
     rv_to_mvnorm: Callable[[T], tuple[jax.Array, jax.Array]]
     rv_sample: Callable[[Any, T], jax.Array]
@@ -83,6 +84,9 @@ def impl_cholesky_based() -> Impl[NormalChol]:
 
     def rv_from_mvnorm(m, c) -> NormalChol:
         return NormalChol(m, jnp.linalg.cholesky(c))
+
+    def rv_from_sqrtnorm(m, c) -> NormalChol:
+        return NormalChol(m, c)
 
     def rv_to_mvnorm(rv: NormalChol):
         return rv.mean, rv.cholesky @ rv.cholesky.T
@@ -165,6 +169,7 @@ def impl_cholesky_based() -> Impl[NormalChol]:
     return Impl(
         name="Cholesky-based",
         rv_from_mvnorm=rv_from_mvnorm,
+        rv_from_sqrtnorm=rv_from_sqrtnorm,
         rv_to_mvnorm=rv_to_mvnorm,
         rv_sample=rv_sample,
         rv_fixedpoint_select=rv_fixedpoint_select,
@@ -281,6 +286,7 @@ def impl_covariance_based() -> Impl[NormalCov]:
 
     return Impl(
         name="Covariance-based",
+        rv_from_sqrtnorm=lambda m, c: NormalCov(m, c @ c.T),
         rv_to_mvnorm=lambda rv: (rv.mean, rv.cov),
         rv_from_mvnorm=lambda m, c: NormalCov(m, c),
         rv_sample=rv_sample,

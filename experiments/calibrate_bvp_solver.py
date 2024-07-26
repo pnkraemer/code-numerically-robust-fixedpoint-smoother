@@ -13,6 +13,8 @@ def main():
     impl = fpx.impl_cholesky_based()
     constraint = information_operator(ts, impl=impl)
     print(jax.tree.map(jnp.shape, constraint))
+    constraint = replace_bconds(y0, y1, impl=impl, cond=constraint)
+    print(jax.tree.map(jnp.shape, constraint))
 
 
 def information_operator(ts, *, impl) -> fpx.SSMCond:
@@ -29,11 +31,28 @@ def information_operator(ts, *, impl) -> fpx.SSMCond:
 
     def linearized(t) -> fpx.SSMCond:
         H = jax.jacfwd(res_wrapped, argnums=1)(t, x_flat)
-        h = res_wrapped(t, x_flat)
-        noise = impl.rv_from_mvnorm(jnp.zeros_like(h), jnp.eye(1))
+        h = res_wrapped(t, x_flat)[None]
+        noise = impl.rv_from_sqrtnorm(jnp.zeros_like(h), 0 * jnp.eye(1))
         return fpx.SSMCond(H[None], noise=noise)
 
     return jax.vmap(linearized)(ts)
+
+
+def replace_bconds(y0, y1, impl, cond: fpx.SSMCond) -> fpx.SSMCond:
+    A = cond.A
+    noise_mean = cond.noise.mean
+
+    A0 = jnp.eye(3)[[0], :]
+    A = A.at[0, ...].set(A0)
+    A = A.at[-1, ...].set(A0)
+
+    b0 = jnp.atleast_1d(y0)
+    b1 = jnp.atleast_1d(y1)
+    noise_mean = noise_mean.at[0, ...].set(b0)
+    noise_mean = noise_mean.at[-1, ...].set(b1)
+    noise = impl.rv_from_sqrtnorm(noise_mean, cond.noise.cholesky)
+
+    return fpx.SSMCond(A, noise)
 
 
 if __name__ == "__main__":
