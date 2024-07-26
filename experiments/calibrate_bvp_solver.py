@@ -1,5 +1,6 @@
 import jax.flatten_util
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 from fpx import fpx
 
 
@@ -18,7 +19,7 @@ def main():
 
     # Update init
     A = jnp.eye(3)[[0], ...]
-    r = jnp.zeros((1, 3))
+    r = jnp.zeros((1,))
     R = jnp.zeros((1, 1))
     cond = fpx.SSMCond(A, noise=impl.rv_from_sqrtnorm(r, R))
     _, cond_rev = impl.bayes_update(init, cond)
@@ -26,16 +27,17 @@ def main():
 
     # Final SSM:
     ssm = fpx.SSM(init=init_new, dynamics=fpx.SSMDynamics(prior, constraint))
-
     # Run an RTS smoother and plot the solution
     rts = fpx.compute_fixedinterval(impl)
     data = jnp.zeros((len(ts[1:]), 1))
+
     posterior, _ = rts(data, ssm)
+
     marginalize = fpx.compute_stats_marginalize(impl=impl, reverse=True)
     marginals = marginalize(*posterior)
 
-    print(jax.tree.map(jnp.shape, posterior))
-    print(jax.tree.map(jnp.shape, marginals))
+    plt.plot(ts, marginals.mean[:, 0])
+    plt.show()
 
 
 def information_operator(ts, *, impl) -> fpx.SSMCond:
