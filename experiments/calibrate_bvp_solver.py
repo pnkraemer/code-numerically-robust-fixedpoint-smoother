@@ -8,7 +8,7 @@ from fpx import fpx
 def main():
     jax.config.update("jax_enable_x64", True)
 
-    num_iterations = 2
+    num_iterations = 3
 
     # Select a BVP
     t0 = 1.0 / (jnp.pi * 3)
@@ -22,15 +22,15 @@ def main():
         return xs[2] + 2 * xs[1] / t + xs[0] / t**4
 
     # Build a state-space model
-    num = 5
+    num = 7
     impl = fpx.impl_cholesky_based()
-    ts = jnp.linspace(t0, t1, endpoint=True, num=100)
+    ts = jnp.linspace(t0, t1, endpoint=True, num=50)
     init = model_init(impl=impl, num=num)
     latent = model_latent(ts, impl=impl, num=num)
     constraint = model_constraint(ts, vf=vector_field, impl=impl, num=num)
 
     # Replace the final constraint with the BCond
-    constraint = model_constraint_replace_y1(y1, cond=constraint, impl=impl)
+    constraint = model_constraint_replace_y1(y1, cond=constraint, impl=impl, num=num)
 
     # We handle the initial constraint separately, so it must be
     # split from the remaining constraints
@@ -57,10 +57,12 @@ def main():
     fp_smoother = fpx.compute_fixedpoint(impl=impl)
 
     # Run a few fixed-point smoother iterations
-    for _ in tqdm.tqdm(range(num_iterations)):
+    progressbar = tqdm.tqdm(range(num_iterations))
+    delta = jnp.inf
+    for _ in progressbar:
+        progressbar.set_description(f"Delta: {delta:.1e}")
         init_estimated, _info = fp_smoother(data=data, ssm=ssm)
-        init = em_update_init(init, init_estimated, impl=impl)
-        print(init.mean)
+        init, delta = em_update_init(init, init_estimated, impl=impl)
 
     print("Final estimate:", init.mean)
     # Construct a fixed-interval smoother so we can plot the solution
@@ -95,6 +97,8 @@ def model_latent(ts, *, impl, num) -> fpx.SSMCond:
 
 
 def model_constraint(ts, *, vf, impl, num) -> fpx.SSMCond:
+    # todo: if we also vectorise over x_flat and pass this as an input,
+    #  we automatically handle nonlinear problems
     x_and_dx = [1.0] * (num + 1)
     x_flat, unflatten = jax.flatten_util.ravel_pytree(x_and_dx)
 
@@ -111,11 +115,11 @@ def model_constraint(ts, *, vf, impl, num) -> fpx.SSMCond:
     return jax.vmap(linearized)(ts)
 
 
-def model_constraint_replace_y1(y1, cond: fpx.SSMCond, impl) -> fpx.SSMCond:
+def model_constraint_replace_y1(y1, cond: fpx.SSMCond, impl, num) -> fpx.SSMCond:
     A = cond.A
     noise_mean = cond.noise.mean
 
-    A0 = jnp.eye(6)[[0], :]
+    A0 = jnp.eye(num + 1)[[0], :]
     # A = A.at[0, ...].set(A0)
     A = A.at[-1, ...].set(A0)
 
@@ -143,7 +147,15 @@ def em_update_init(init, estimated, impl):
     diff = estimated.mean - init.mean
     stack = jnp.concatenate([init.cholesky.T, diff[None, ...]], axis=0)
     cholesky_new = jnp.linalg.qr(stack, mode="r").T
-    return impl.rv_from_sqrtnorm(mean_new, cholesky_new)
+    updated = impl.rv_from_sqrtnorm(mean_new, cholesky_new)
+
+    # Compute the difference between updates
+    flat_old, _ = jax.flatten_util.ravel_pytree(impl.rv_to_mvnorm(init))
+    flat_new, _ = jax.flatten_util.ravel_pytree(impl.rv_to_mvnorm(updated))
+    delta = jnp.linalg.norm(
+        (flat_old - flat_new) / (1e-10 + jnp.abs(flat_old))
+    ) / jnp.sqrt(flat_old.size)
+    return updated, delta
 
 
 if __name__ == "__main__":
