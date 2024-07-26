@@ -317,7 +317,7 @@ jax.tree_util.register_pytree_node(
 
 
 def ssm_car_tracking_velocity(
-    ts, /, impl: Impl[T], noise=1.0, diffusion=1.0, dim=2
+    ts, /, impl: Impl[T], noise=1.0, diffusion=1.0, dim=1
 ) -> SSM[T]:
     """Construct a Wiener-velocity car-tracking model."""
 
@@ -383,7 +383,7 @@ def ssm_wiener_integrated_interpolation(ts, /, impl: Impl[T], num: int) -> SSM[T
 
 
 def ssm_car_tracking_acceleration(
-    ts, /, noise, diffusion, impl: Impl[T], dim: int = 2
+    ts, /, impl: Impl[T], noise=1.0, diffusion=1.0, dim: int = 1
 ) -> SSM[T]:
     """Construct a Wiener-acceleration car-tracking model."""
 
