@@ -7,161 +7,76 @@ from fpx import fpx
 
 def main():
     jax.config.update("jax_enable_x64", True)
-    num_iterations = 20
+    num_iterations = 10
 
     # Build a state-space model and sample data
     key = jax.random.PRNGKey(1)
     ts = jnp.linspace(0.0, 1.0, endpoint=True, num=10)
     impl = fpx.impl_cholesky_based()
-    ssm = fpx.ssm_car_tracking_velocity(ts, noise=0.01, dim=2, impl=impl)
+    ssm = fpx.ssm_car_tracking_velocity(ts, noise=0.001, dim=2, impl=impl)
     init, dynamics = ssm.init, ssm.dynamics
     key, subkey = jax.random.split(key, num=2)
     mean = jax.random.normal(subkey, shape=init.mean.shape)
-    # key, subkey = jax.random.split(key, num=2)
-    # cholesky = jax.random.normal(subkey, shape=init.cholesky.shape)
-    cholesky = jnp.eye(len(init.cholesky)) * 1e-4
+    key, subkey = jax.random.split(key, num=2)
+    cholesky = jax.random.normal(subkey, shape=init.cholesky.shape)
+    # cholesky = jnp.eye(len(init.cholesky)) * 1e-4
     init = impl.rv_from_sqrtnorm(mean, cholesky)
     ssm = fpx.SSM(init, dynamics)
     sample = fpx.compute_stats_sample(impl=impl)
     key, subkey = jax.random.split(key, num=2)
     latent, data = sample(subkey, ssm)
-    mean_true, cholesky_true = ssm.init.mean, ssm.init.cholesky
+    ssm_true = ssm
+
+    # Build a fixed-point smoother
+    fp_smoother = fpx.compute_fixedpoint(impl=impl)
+
+    # Run the fixed-point smoother in the right model
+    init_estimated_true, info = fp_smoother(data=data, ssm=ssm_true)
 
     # Build a state-space model with the wrong initial condition
     key, subkey = jax.random.split(key, num=2)
     mean = jax.random.normal(subkey, shape=init.mean.shape)
-    key, subkey = jax.random.split(key, num=2)
-    cholesky = jax.random.normal(subkey, shape=init.cholesky.shape)
-    init = impl.rv_from_sqrtnorm(mean, cholesky)
+    # key, subkey = jax.random.split(key, num=2)
+    # cholesky = jax.random.normal(subkey, shape=init.cholesky.shape)
+    init = impl.rv_from_sqrtnorm(mean, init.cholesky)
     ssm = fpx.SSM(init, dynamics)
 
-    # Run a fixed-point smoother on the wrong model
-    fp_smoother = fpx.compute_fixedpoint(impl=impl)
+    # Create a big plot
+    fig, axes = plt.subplots(nrows=2, ncols=num_iterations, sharey=True)
 
     # Run a few fixed-point smoothe iterations
-    for _ in range(10):
+    for i, axes_row in zip(range(num_iterations), axes.T):
         init_estimated, info = fp_smoother(data=data, ssm=ssm)
         init, delta = em_update_init(old=init, new=init_estimated, impl=impl)
         ssm = fpx.SSM(init=init, dynamics=dynamics)
-        # print(delta)
-        print(info["likelihood"])
-        # print(jnp.abs(init.mean - mean_true))
-        # print(jnp.abs(init.cholesky - cholesky_true))
-        print()
+
+        def pdf(x):
+            m, c = impl.rv_to_mvnorm(init_estimated)
+            # return -jnp.log(c[0, 0]) - 0.5 + (x - m[0])**2 / c[0, 0]**2 - 0.5*jnp.log(2*jnp.pi)
+            return jax.scipy.stats.norm.logpdf(x, m[0], c[0, 0])
+
+        def pdf_true(x):
+            m_, c_ = impl.rv_to_mvnorm(init_estimated_true)
+            # return -jnp.log(c[0, 0]) - 0.5 + (x - m[0])**2 / c[0, 0]**2 - 0.5*jnp.log(2*jnp.pi)
+            return jax.scipy.stats.norm.logpdf(x, m_[0], c_[0, 0])
+
+        xs = jnp.linspace(latent[0, 0] - 0.15, latent[0, 0] + 0.15)
+        axes_row[0].plot(xs, jax.vmap(pdf)(xs), label="Estimate")
+        axes_row[0].plot(xs, jax.vmap(pdf_true)(xs), label="Truth")
+        axes_row[0].set_title(f"Likelihood: {info['likelihood']:.1f}")
+
+        axes_row[0].axvline(latent[0, 0], color="black")
+        axes_row[0].legend()
+        # axes_row[0].set_ylim((-10, 10.))
+        print(i, info["likelihood"])
+
+    plt.show()
 
     print(init_estimated.mean)
-    print(mean_true)
+    print(init_estimated_true.mean)
     print()
     print(init_estimated.cholesky @ init_estimated.cholesky.T)
-    print(cholesky_true @ cholesky_true.T)
-    assert False
-    print(pdf)
-
-    assert False
-    # Linearize
-    x_and_dx = [1.0] * (num + 1)
-    x_flat, unflatten = jax.flatten_util.ravel_pytree(x_and_dx)
-    xs = jnp.stack([x_flat] * len(ts[1:]), axis=0)
-    constraint = model_constraint(
-        ts[1:], xs, vector_field, unflatten=unflatten, impl=impl
-    )
-
-    # Replace the final constraint with the BCond
-    constraint = model_constraint_replace_y1(y1, cond=constraint, impl=impl, num=num)
-
-    # Update the initial condition on y0
-    interp_t0 = model_interpolation(impl=impl, num=num)
-    _, cond_interp_t0 = impl.bayes_update(init, interp_t0)
-    init = impl.conditional_parametrize(y0, cond_interp_t0)
-
-    # Construct the state-space model including
-    # initial condition, constraints, and latent dynamics
-    dynamics = fpx.SSMDynamics(latent, constraint)
-    data = jnp.zeros((len(ts[1:]), 1))
-    ssm = fpx.SSM(init=init, dynamics=dynamics)
-
-    # Construct a fixed-point smoother
-    fp_smoother = fpx.compute_fixedpoint(impl=impl)
-
-    # Run a few fixed-point smoother iterations
-    delta = jnp.inf
-    like_new = jnp.inf
-    progressbar = tqdm.tqdm(range(num_iterations))
-    for _ in progressbar:
-        progressbar.set_description(f"Delta: {delta:.3e}, Likelihood: {like_new:.3e}")
-        init_estimated, info = fp_smoother(data=data, ssm=ssm)
-        like_new = info["likelihood"]
-        init, delta = em_update_init(old=init, new=init_estimated, impl=impl)
-        ssm = fpx.SSM(init=init, dynamics=dynamics)
-
-    # Construct a fixed-interval smoother so we can plot the solution
-    fi_smoother = fpx.compute_fixedinterval(impl=impl)
-    (final, conds), _info = fi_smoother(data=data, ssm=ssm)
-
-    marginalize = fpx.compute_stats_marginalize(impl=impl, reverse=True)
-    marginals = marginalize(final, conds)
-
-    # Plot the results
-    plt.plot(ts, marginals.mean[:, 0], label="Approximation")
-    if solution is not None:
-        print(jnp.linalg.norm(jax.vmap(solution)(ts) - marginals.mean[:, 0]))
-        plt.plot(ts, jax.vmap(solution)(ts), label="Truth")
-    plt.legend()
-    plt.show()
-
-    # Plot the residuals
-    error = jax.vmap(vector_field)(ts, *marginals.mean.T)
-    plt.semilogy(ts, jnp.abs(error), label="Residual")
-    plt.legend()
-    plt.show()
-
-
-def bvp_matlab():
-    t0 = 1.0 / (jnp.pi * 3)
-    t1 = 1.0
-    y0 = jnp.atleast_1d(0.0)
-    y1 = jnp.atleast_1d(jnp.sin(1.0))
-
-    def vector_field(t, *xs):
-        # Same as in matlab:
-        # https://www.mathworks.com/help/matlab/ref/bvp5c.html
-        return xs[2] + 2 * xs[1] / t + xs[0] / t**4
-
-    def solution(t):
-        return jnp.sin(1 / t)
-
-    return vector_field, (t0, t1), (y0, y1), solution
-
-
-def bvp_linear_15th(scale=0.1):
-    t0 = -1.0
-    t1 = 1.0
-    y0 = 1.0
-    y1 = 1.0
-
-    def vector_field(t, *xs):
-        return scale * xs[2] - xs[0] * t
-
-    y0 = jnp.atleast_1d(y0)
-    y1 = jnp.atleast_1d(y1)
-    return vector_field, (t0, t1), (y0, y1), None
-
-
-def bvp_nonlinear_20th(scale=0.1):
-    t0 = 0.0
-    t1 = 1.0
-    y0 = 1 + scale * jnp.log(jnp.cosh(-0.745 / scale))
-    y1 = 1 + scale * jnp.log(jnp.cosh(0.255 / scale))
-
-    def vector_field(_t, *xs):
-        return scale * xs[2] + xs[1] ** 2 - 1.0
-
-    def solution(t):
-        return 1 + scale * jnp.log(jnp.cosh(t - 0.745) / scale)
-
-    y0 = jnp.atleast_1d(y0)
-    y1 = jnp.atleast_1d(y1)
-    return vector_field, (t0, t1), (y0, y1), solution
+    print(init_estimated_true.cholesky @ init_estimated_true.cholesky.T)
 
 
 def model_init(*, impl, num):
@@ -221,7 +136,8 @@ def em_update_init(*, old, new, impl):
     diff = new.mean - old.mean
     stack = jnp.concatenate([new.cholesky.T, diff[None, ...]], axis=0)
     cholesky_new = jnp.linalg.qr(stack, mode="r").T
-    updated = impl.rv_from_sqrtnorm(mean_new, cholesky_new)
+    # updated = impl.rv_from_sqrtnorm(mean_new, cholesky_new)
+    updated = impl.rv_from_sqrtnorm(mean_new, old.cholesky)
 
     # Compute the difference between updates
     flat_old, _ = jax.flatten_util.ravel_pytree(impl.rv_to_mvnorm(old))
