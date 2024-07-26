@@ -6,17 +6,19 @@ from fpx import fpx
 
 
 def main():
-    jax.config.update("jax_enable_x64", False)
+    # We use high-order Wiener processes
+    # which require double precision
+    jax.config.update("jax_enable_x64", True)
 
     num_iterations = 10
 
     # Select a BVP
     # vector_field, (t0, t1), (y0, y1), solution = bvp_matlab()
-    vector_field, (t0, t1), (y0, y1), solution = bvp_linear_15th()
+    vector_field, (t0, t1), (y0, y1), solution = bvp_linear_15th(scale=1e-4)
 
     # Build a state-space model
-    ts = jnp.linspace(t0, t1, endpoint=True, num=10)
-    num = 7
+    ts = jnp.linspace(t0, t1, endpoint=True, num=100)
+    num = 3
     impl = fpx.impl_cholesky_based()
     init = model_init(impl=impl, num=num)
     latent = model_latent(ts, impl=impl, num=num)
@@ -40,11 +42,6 @@ def main():
     _, cond_interp_t0 = impl.bayes_update(init, interp_t0)
     init = impl.conditional_parametrize(y0, cond_interp_t0)
 
-    # Update the initial condition on the ODE constraint
-    zeros = jnp.zeros((1,))
-    _, cond_constraint_t0 = impl.bayes_update(init, constraint_t0)
-    init = impl.conditional_parametrize(zeros, cond_constraint_t0)
-
     # Construct the state-space model including
     # initial condition, constraints, and latent dynamics
     dynamics = fpx.SSMDynamics(latent, constraint_ts)
@@ -60,7 +57,8 @@ def main():
     for _ in progressbar:
         progressbar.set_description(f"Delta: {delta:.1e}")
         init_estimated, _info = fp_smoother(data=data, ssm=ssm)
-        init, delta = em_update_init(init, init_estimated, impl=impl)
+        init, delta = em_update_init(old=init, new=init_estimated, impl=impl)
+        print(init.mean)
 
     print("Final estimate:", init.mean)
     # Construct a fixed-interval smoother so we can plot the solution
@@ -181,22 +179,20 @@ def model_interpolation(*, impl, num):
     return fpx.SSMCond(A, noise=impl.rv_from_sqrtnorm(r, R))
 
 
-def em_update_init(init, estimated, impl):
+def em_update_init(*, old, new, impl):
     # Update the mean
-    mean_new = estimated.mean
+    mean_new = new.mean
 
     # Update the Cholesky factor
-    diff = estimated.mean - init.mean
-    stack = jnp.concatenate([init.cholesky.T, diff[None, ...]], axis=0)
+    diff = new.mean - old.mean
+    stack = jnp.concatenate([new.cholesky.T, diff[None, ...]], axis=0)
     cholesky_new = jnp.linalg.qr(stack, mode="r").T
     updated = impl.rv_from_sqrtnorm(mean_new, cholesky_new)
 
     # Compute the difference between updates
-    flat_old, _ = jax.flatten_util.ravel_pytree(impl.rv_to_mvnorm(init))
-    flat_new, _ = jax.flatten_util.ravel_pytree(impl.rv_to_mvnorm(updated))
-    delta = jnp.linalg.norm(
-        (flat_old - flat_new) / (1e-10 + jnp.abs(flat_old))
-    ) / jnp.sqrt(flat_old.size)
+    flat_old, _ = jax.flatten_util.ravel_pytree(impl.rv_to_mvnorm(old))
+    flat_new, _ = jax.flatten_util.ravel_pytree(impl.rv_to_mvnorm(new))
+    delta = jnp.linalg.norm((flat_old - flat_new)) / jnp.sqrt(flat_old.size)
     return updated, delta
 
 
