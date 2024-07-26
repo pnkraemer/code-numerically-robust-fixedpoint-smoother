@@ -16,7 +16,7 @@ df = pd.DataFrame(results)
 # Multiply the strings by 4 because this turns
 # the number of single-precision floats into bytes
 # (32-bit precision; 8 bits are one byte)
-df_formatted = df.map(lambda s: eval_utils.format_tex(4 * s))
+df_formatted = df.map(lambda s: eval_utils.format_large_number_tex(4 * s))
 
 # Print a latex-compatible version of the frame
 print()

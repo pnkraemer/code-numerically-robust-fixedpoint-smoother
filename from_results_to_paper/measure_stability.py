@@ -16,7 +16,7 @@ with open(filename, "rb") as f:
 df = pd.DataFrame(results)
 
 # Format large numbers
-df_formatted = df.map(lambda s: eval_utils.format_tex(4 * s))
+df_formatted = df.map(lambda s: eval_utils.format_large_number_tex(4 * s))
 
 # Print the dataframe in a latex-compatible way (to be copy/pasted)
 print()
