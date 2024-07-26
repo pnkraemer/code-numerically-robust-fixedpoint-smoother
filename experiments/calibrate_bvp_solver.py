@@ -14,10 +14,10 @@ def main():
 
     # Select a BVP
     # vector_field, (t0, t1), (y0, y1), solution = bvp_matlab()
-    vector_field, (t0, t1), (y0, y1), solution = bvp_linear_15th(scale=1e-4)
+    vector_field, (t0, t1), (y0, y1), solution = bvp_linear_15th(scale=1e-3)
 
     # Build a state-space model
-    ts = jnp.linspace(t0, t1, endpoint=True, num=100)
+    ts = jnp.linspace(t0, t1, endpoint=True, num=200)
     num = 3
     impl = fpx.impl_cholesky_based()
     init = model_init(impl=impl, num=num)
@@ -26,16 +26,13 @@ def main():
     # Linearize
     x_and_dx = [1.0] * (num + 1)
     x_flat, unflatten = jax.flatten_util.ravel_pytree(x_and_dx)
-    xs = jnp.stack([x_flat] * len(ts), axis=0)
-    constraint = model_constraint(ts, xs, vector_field, unflatten=unflatten, impl=impl)
+    xs = jnp.stack([x_flat] * len(ts[1:]), axis=0)
+    constraint = model_constraint(
+        ts[1:], xs, vector_field, unflatten=unflatten, impl=impl
+    )
 
     # Replace the final constraint with the BCond
     constraint = model_constraint_replace_y1(y1, cond=constraint, impl=impl, num=num)
-
-    # We handle the initial constraint separately, so it must be
-    # split from the remaining constraints
-    constraint_t0 = jax.tree.map(lambda s: s[0, ...], constraint)
-    constraint_ts = jax.tree.map(lambda s: s[1:, ...], constraint)
 
     # Update the initial condition on y0
     interp_t0 = model_interpolation(impl=impl, num=num)
@@ -44,7 +41,7 @@ def main():
 
     # Construct the state-space model including
     # initial condition, constraints, and latent dynamics
-    dynamics = fpx.SSMDynamics(latent, constraint_ts)
+    dynamics = fpx.SSMDynamics(latent, constraint)
     ssm = fpx.SSM(init=init, dynamics=dynamics)
     data = jnp.zeros((len(ts[1:]), 1))
 
@@ -192,8 +189,9 @@ def em_update_init(*, old, new, impl):
     # Compute the difference between updates
     flat_old, _ = jax.flatten_util.ravel_pytree(impl.rv_to_mvnorm(old))
     flat_new, _ = jax.flatten_util.ravel_pytree(impl.rv_to_mvnorm(new))
-    delta = jnp.linalg.norm((flat_old - flat_new)) / jnp.sqrt(flat_old.size)
-    return updated, delta
+    delta_abs = jnp.abs(flat_old - flat_new)
+    delta_rel = delta_abs / (1e-10 + jnp.abs(flat_old))
+    return updated, jnp.linalg.norm(delta_rel) / jnp.sqrt(flat_old.size)
 
 
 if __name__ == "__main__":
