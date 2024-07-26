@@ -11,18 +11,11 @@ def main():
     num_iterations = 3
 
     # Select a BVP
-    t0 = 1.0 / (jnp.pi * 3)
-    t1 = 1.0
-    y0 = jnp.atleast_1d(0.0)
-    y1 = jnp.atleast_1d(jnp.sin(1.0))
-
-    def vector_field(t, *xs):
-        # Same as in matlab:
-        # https://www.mathworks.com/help/matlab/ref/bvp5c.html
-        return xs[2] + 2 * xs[1] / t + xs[0] / t**4
+    # vector_field, (t0, t1), (y0, y1), solution = bvp_matlab()
+    vector_field, (t0, t1), (y0, y1), solution = bvp_nonlinear_20th()
 
     # Build a state-space model
-    ts = jnp.linspace(t0, t1, endpoint=True, num=50)
+    ts = jnp.linspace(t0, t1, endpoint=True, num=150)
     num = 7
     impl = fpx.impl_cholesky_based()
     init = model_init(impl=impl, num=num)
@@ -79,7 +72,7 @@ def main():
 
     # Plot the results
     plt.plot(ts, marginals.mean[:, 0], label="Approximation")
-    plt.plot(ts, jnp.sin(1 / ts), label="Truth")
+    plt.plot(ts, jax.vmap(solution)(ts), label="Truth")
     plt.legend()
     plt.show()
 
@@ -88,6 +81,40 @@ def main():
     plt.semilogy(ts, jnp.abs(error), label="Residual")
     plt.legend()
     plt.show()
+
+
+def bvp_matlab():
+    t0 = 1.0 / (jnp.pi * 3)
+    t1 = 1.0
+    y0 = jnp.atleast_1d(0.0)
+    y1 = jnp.atleast_1d(jnp.sin(1.0))
+
+    def vector_field(t, *xs):
+        # Same as in matlab:
+        # https://www.mathworks.com/help/matlab/ref/bvp5c.html
+        return xs[2] + 2 * xs[1] / t + xs[0] / t**4
+
+    def solution(t):
+        return jnp.sin(1 / t)
+
+    return vector_field, (t0, t1), (y0, y1), solution
+
+
+def bvp_nonlinear_20th(scale=0.1):
+    t0 = 0.0
+    t1 = 1.0
+    y0 = 1 + scale * jnp.log(jnp.cosh(-0.745 / scale))
+    y1 = 1 + scale * jnp.log(jnp.cosh(0.255 / scale))
+
+    def vector_field(_t, *xs):
+        return scale * xs[2] + xs[1] ** 2 - 1.0
+
+    def solution(t):
+        return 1 + scale * jnp.log(jnp.cosh(t - 0.745) / scale)
+
+    y0 = jnp.atleast_1d(y0)
+    y1 = jnp.atleast_1d(y1)
+    return vector_field, (t0, t1), (y0, y1), solution
 
 
 def model_init(*, impl, num):
