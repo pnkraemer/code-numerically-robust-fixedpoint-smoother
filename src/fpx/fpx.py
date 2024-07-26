@@ -344,19 +344,21 @@ def ssm_car_tracking_velocity(
     return SSM(init=x0, dynamics=jax.vmap(transition)(jnp.diff(ts)))
 
 
-def ssm_seventh_order_wiener_derivative(ts, /, impl: Impl[T]) -> SSM[T]:
+def ssm_seventh_order_wiener_interpolation(ts, /, impl: Impl[T]) -> SSM[T]:
+    """Construct an interpolation problem with a seven-derivative Wiener process."""
+    # Get all prior transitions from probdiffeq
     prior = probdiffeq.ivpsolvers.prior_ibm_discrete(ts, num_derivatives=7)
     init = prior.init
     inintmean = init.mean.at[0].set(1.0)
     cov = init.cholesky @ init.cholesky.T
     cov = cov.at[0, 0].set(1e-12)
-
     init = impl.rv_from_mvnorm(inintmean, cov)
     A = prior.conditional.matmul
     q = prior.conditional.noise.mean
     Q = prior.conditional.noise.cholesky
     noise = impl.rv_from_mvnorm(q, jax.vmap(lambda s: s @ s.T)(Q))
 
+    # Observations: point-observations of the zeroth state.
     H = jnp.zeros((1, A.shape[1]))
     H = H.at[0, 0].set(1.0)
     r = jnp.zeros((1,))
