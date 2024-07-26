@@ -6,16 +6,16 @@ from fpx import fpx
 
 
 def main():
-    jax.config.update("jax_enable_x64", True)
+    jax.config.update("jax_enable_x64", False)
 
-    num_iterations = 3
+    num_iterations = 10
 
     # Select a BVP
     # vector_field, (t0, t1), (y0, y1), solution = bvp_matlab()
-    vector_field, (t0, t1), (y0, y1), solution = bvp_nonlinear_20th()
+    vector_field, (t0, t1), (y0, y1), solution = bvp_linear_15th()
 
     # Build a state-space model
-    ts = jnp.linspace(t0, t1, endpoint=True, num=150)
+    ts = jnp.linspace(t0, t1, endpoint=True, num=10)
     num = 7
     impl = fpx.impl_cholesky_based()
     init = model_init(impl=impl, num=num)
@@ -72,7 +72,8 @@ def main():
 
     # Plot the results
     plt.plot(ts, marginals.mean[:, 0], label="Approximation")
-    plt.plot(ts, jax.vmap(solution)(ts), label="Truth")
+    if solution is not None:
+        plt.plot(ts, jax.vmap(solution)(ts), label="Truth")
     plt.legend()
     plt.show()
 
@@ -98,6 +99,20 @@ def bvp_matlab():
         return jnp.sin(1 / t)
 
     return vector_field, (t0, t1), (y0, y1), solution
+
+
+def bvp_linear_15th(scale=0.1):
+    t0 = -1.0
+    t1 = 1.0
+    y0 = 1.0
+    y1 = 1.0
+
+    def vector_field(t, *xs):
+        return scale * xs[2] - xs[0] * t
+
+    y0 = jnp.atleast_1d(y0)
+    y1 = jnp.atleast_1d(y1)
+    return vector_field, (t0, t1), (y0, y1), None
 
 
 def bvp_nonlinear_20th(scale=0.1):
