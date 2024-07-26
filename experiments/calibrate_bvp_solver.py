@@ -5,14 +5,18 @@ import tqdm
 from fpx import fpx
 
 # todo: track marginal likelihoods of the data and compare for different means
+# todo: use car tracking for parameter estimation
+# todo: use autoregressive model for complexity estimates
+# todo: use BVP for stability
 
 
 def main():
     # We use high-order Wiener processes
     # which require double precision
-    jax.config.update("jax_enable_x64", True)
+    # jax.config.update("jax_enable_x64", True)
 
-    num_iterations = 100
+    num_iterations = 20
+
     # Select a BVP
     # vector_field, (t0, t1), (y0, y1), solution = bvp_matlab()
     vector_field, (t0, t1), (y0, y1), solution = bvp_linear_15th(scale=1e-3)
@@ -59,7 +63,6 @@ def main():
         like_new = info["likelihood"]
         init, delta = em_update_init(old=init, new=init_estimated, impl=impl)
         ssm = fpx.SSM(init=init, dynamics=dynamics)
-        print(init.mean)
 
     # Construct a fixed-interval smoother so we can plot the solution
     fi_smoother = fpx.compute_fixedinterval(impl=impl)
@@ -71,6 +74,7 @@ def main():
     # Plot the results
     plt.plot(ts, marginals.mean[:, 0], label="Approximation")
     if solution is not None:
+        print(jnp.linalg.norm(jax.vmap(solution)(ts) - marginals.mean[:, 0]))
         plt.plot(ts, jax.vmap(solution)(ts), label="Truth")
     plt.legend()
     plt.show()
@@ -132,7 +136,7 @@ def bvp_nonlinear_20th(scale=0.1):
 
 def model_init(*, impl, num):
     mean = jnp.ones((num + 1,))
-    cholesky = jnp.eye(num + 1)
+    cholesky = 10_000 * jnp.eye(num + 1)  # diffuse initialisation
     return impl.rv_from_sqrtnorm(mean, cholesky)
 
 
@@ -149,7 +153,7 @@ def model_constraint(ts, xs, vf, *, unflatten, impl) -> fpx.SSMCond:
         H = jax.jacfwd(vf_wrapped, argnums=1)(t, x_flat)
         h = vf_wrapped(t, x_flat)[None]
         h = h - H @ x_flat
-        noise = impl.rv_from_sqrtnorm(h, 0 * jnp.eye(1))
+        noise = impl.rv_from_sqrtnorm(h, 0.0 * jnp.eye(1))
         return fpx.SSMCond(H[None], noise=noise)
 
     return jax.vmap(linearized)(ts, xs)
@@ -195,8 +199,8 @@ def em_update_init(*, old, new, impl):
     delta_abs = jnp.abs(flat_old - flat_new)
 
     nugget = jnp.sqrt(jnp.finfo(flat_old.dtype).eps)
-    # delta_rel = delta_abs / (nugget + jnp.abs(flat_old))
-    return updated, jnp.linalg.norm(delta_abs) / jnp.sqrt(flat_old.size)
+    delta_rel = delta_abs / (nugget + jnp.abs(flat_old))
+    return updated, jnp.linalg.norm(delta_rel) / jnp.sqrt(flat_old.size)
 
 
 if __name__ == "__main__":
