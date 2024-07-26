@@ -475,11 +475,12 @@ def compute_stats_marginalize(impl: Impl[T], reverse: bool) -> Callable:
 
 def compute_fixedpoint(impl: Impl[T], cb: Callable | None = None) -> Callable:
     """Estimate a solution of the fixed-point smoothing problem."""
+    # todo: track the likelihood in all estimators
 
     def estimate(data: jax.Array, ssm: SSM[T]):
         def step_fun(state_k, inputs: tuple[jax.Array, SSMDynamics]) -> tuple:
             # Read
-            state_k, _info, likelihood = state_k
+            state_k, _info = state_k
             (y_k, model_k) = inputs
 
             # Predict
@@ -490,21 +491,15 @@ def compute_fixedpoint(impl: Impl[T], cb: Callable | None = None) -> Callable:
             # Update
             rv, gain = impl.bayes_update(state_kplus, model_k.observation)
             state_new = impl.conditional_parametrize(y_k, gain)
-            lkl = jax.scipy.stats.multivariate_normal.logpdf(
-                y_k, *impl.rv_to_mvnorm(rv)
-            )
-            likelihood += lkl
-            info = cb(state_new, backward) if cb is not None else {}
-            return ((state_new, backward), info, likelihood), {}
+            info_ = cb(state_new, backward) if cb is not None else {}
+            return ((state_new, backward), info_), {}
 
         cond = impl.conditional_from_identity(ssm.init)
         init, xs = (ssm.init, cond), (data, ssm.dynamics)
 
         info = cb(*init) if cb is not None else {}
-        ((rv, cond), aux, like), _ = jax.lax.scan(
-            step_fun, xs=xs, init=(init, info, 0.0)
-        )
-        return impl.marginalize(rv, cond), {"likelihood": like / len(data), **aux}
+        ((rv, cond), aux), _ = jax.lax.scan(step_fun, xs=xs, init=(init, info))
+        return impl.marginalize(rv, cond), {**aux}
 
     return estimate
 

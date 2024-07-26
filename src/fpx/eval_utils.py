@@ -2,6 +2,8 @@
 
 import pickle
 
+import jax
+import jax.flatten_util
 import jax.numpy as jnp
 import pandas as pd
 
@@ -22,3 +24,9 @@ def format_large_number_tex(float_number):
     mantissa = float_number / 10**exponent
     mantissa_format = str(mantissa)[0:3]  # todo: expose num_digits?
     return r"${0} \times 10^{{{1}}}$".format(mantissa_format, str(int(exponent)))
+
+
+def tree_random_like(key, tree, scale):
+    flat, unflatten = jax.flatten_util.ravel_pytree(tree)
+    flat_like = scale * jax.random.normal(key, shape=flat.shape, dtype=flat.dtype)
+    return unflatten(flat_like)
