@@ -8,9 +8,7 @@ import pandas as pd
 from fpx import eval_utils
 
 # Load the results
-
 filename = eval_utils.filename_results(__file__, replace="from_results_to_paper")
-
 with open(filename, "rb") as f:
     results = pickle.load(f)
 
