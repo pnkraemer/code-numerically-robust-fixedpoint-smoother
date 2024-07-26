@@ -1,30 +1,37 @@
+import os
+
 import jax.flatten_util
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import tqdm
 from fpx import fpx
+from tueplots import axes
+
+plt.rcParams.update(axes.lines())
+plt.rcParams.update(axes.tick_direction(y="in", x="in"))
 
 
-def main():
+def main(seed=1):
     jax.config.update("jax_enable_x64", True)
     num_iterations = 3
-
-    # Build a state-space model and sample data
-    key = jax.random.PRNGKey(3)
-    ts = jnp.linspace(0.0, 1.0, endpoint=True, num=10)
+    key = jax.random.PRNGKey(seed)
     impl = fpx.impl_cholesky_based()
+
+    # Build a state-space model
+    ts = jnp.linspace(0.0, 1.0, endpoint=True, num=10)
     ssm = fpx.ssm_car_tracking_velocity(ts, noise=0.1, dim=2, impl=impl)
     init, dynamics = ssm.init, ssm.dynamics
-    key, subkey = jax.random.split(key, num=2)
-    mean = jax.random.normal(subkey, shape=init.mean.shape)
-    key, subkey = jax.random.split(key, num=2)
-    cholesky = jax.random.normal(subkey, shape=init.cholesky.shape)
+    key, subkey1, subkey2 = jax.random.split(key, num=3)
+    mean = jax.random.normal(subkey1, shape=init.mean.shape)
+    cholesky = jax.random.normal(subkey2, shape=init.cholesky.shape)
     init = impl.rv_from_sqrtnorm(mean, cholesky)
     ssm = fpx.SSM(init, dynamics)
+    ssm_true = ssm  # save the ssm as the correct one
+
+    # Sample data from the correct state-space model
     sample = fpx.compute_stats_sample(impl=impl)
     key, subkey = jax.random.split(key, num=2)
     latent, data = sample(subkey, ssm)
-    ssm_true = ssm
 
     # Build a fixed-point smoother
     fp_smoother = fpx.compute_fixedpoint(impl=impl)
@@ -38,58 +45,62 @@ def main():
     init = impl.rv_from_sqrtnorm(mean, init.cholesky)
     ssm = fpx.SSM(init, dynamics)
 
-    # Create a big plot
+    # Create a big figure (to be filled)
     fig, axes = plt.subplots(
-        nrows=1,
+        nrows=2,
         ncols=num_iterations,
+        sharex=False,
         sharey=True,
-        figsize=(8, 5 / num_iterations),
-        dpi=100,
+        figsize=(8, 8 / num_iterations),
+        constrained_layout=True,
     )
+    axes[0, 0].set_ylabel(r"PDF ($\theta_1$)")
+    axes[1, 0].set_ylabel(r"PDF ($\theta_2$)")
 
-    # Run a few fixed-point smoothe iterations
-    for i, axes_row in zip(range(num_iterations), axes[:, None]):
+    # Run expectation maximisation around fixed-point smoother iterations
+    # and plot the evolution of the PDFs
+    for i, axes_i in zip(range(num_iterations), axes.T):
+        # Run fixedpoint smoother and carry out EM update
         init_estimated, info = fp_smoother(data=data, ssm=ssm)
         init, delta = em_update_init(old=init, new=init_estimated, impl=impl)
         ssm = fpx.SSM(init=init, dynamics=dynamics)
 
-        def pdf(x):
-            m, c = impl.rv_to_mvnorm(init_estimated)
-            # return -jnp.log(c[0, 0]) - 0.5 + (x - m[0])**2 / c[0, 0]**2 - 0.5*jnp.log(2*jnp.pi)
-            return jax.scipy.stats.norm.pdf(x, m[0], c[0, 0])
+        # Plot the first coordinate
+        xs = jnp.linspace(data[0, 0] - 1 / 6, data[0, 0] + 1 / 3, num=100)
+        x0 = init_estimated  # alias to avoid linebreak in the next line
+        plot_pdf(axes_i[0], xs, x0, i=0, impl=impl, color="C0", label="Iterate")
+        t0 = init_estimated_true  # alias to avoid linebreak in the next line
+        plot_pdf(axes_i[0], xs, t0, i=0, impl=impl, color="C1", label="Target")
+        axes_i[0].set_title(f"Evidence: {info['likelihood']:.2f}", fontsize="medium")
+        axes_i[0].axvline(data[0, 0], label="Noisy data", color="black")
+        axes_i[0].legend(fontsize="x-small")
+        axes_i[0].set_xlim((jnp.amin(xs), jnp.amax(xs)))
+        axes_i[0].set_xlabel("Realisation")
 
-        def pdf_true(x):
-            m_, c_ = impl.rv_to_mvnorm(init_estimated_true)
-            # return -jnp.log(c[0, 0]) - 0.5 + (x - m[0])**2 / c[0, 0]**2 - 0.5*jnp.log(2*jnp.pi)
-            return jax.scipy.stats.norm.pdf(x, m_[0], c_[0, 0])
+        # Plot the second coordinate
+        xs = jnp.linspace(data[0, 1] - 1 / 6, data[0, 1] + 1 / 3, num=100)
+        x0 = init_estimated  # alias to avoid linebreak in the next line
+        plot_pdf(axes_i[1], xs, x0, i=1, impl=impl, color="C0", label="Iterate")
+        t0 = init_estimated_true  # alias to avoid linebreak in the next line
+        plot_pdf(axes_i[1], xs, t0, i=1, impl=impl, color="C1", label="Target")
+        axes_i[1].axvline(data[0, 1], label="Noisy data", color="black")
+        axes_i[1].legend(fontsize="x-small")
+        axes_i[1].set_xlim((jnp.amin(xs), jnp.amax(xs)))
+        axes_i[1].set_xlabel("Realisation")
 
-        xs = jnp.linspace(latent[0, 0] - 0.25, latent[0, 0] + 0.25, num=100)
-        axes_row[0].plot(
-            xs, jax.vmap(pdf)(xs) / jnp.sum(jax.vmap(pdf)(xs)), label="Iterate"
-        )
-        axes_row[0].plot(
-            xs, jax.vmap(pdf_true)(xs) / jnp.sum(jax.vmap(pdf_true)(xs)), label="Target"
-        )
-        axes_row[0].set_title(f"Evidence: {info['likelihood']:.2f}", fontsize="medium")
-
-        # axes_row[0].axvline(latent[0, 0], label="", color="black")
-        axes_row[0].axvline(data[0, 0], label="Noisy data", color="black")
-        axes_row[0].legend(fontsize="x-small")
-        # axes_row[0].set_ylim((-10, 10.))
-        print(i, info["likelihood"])
-
-        print(init_estimated.mean)
-        print(init_estimated_true.mean)
-        print()
-    plt.show()
-
-    print(init_estimated.cholesky @ init_estimated.cholesky.T)
-    print(init_estimated_true.cholesky @ init_estimated_true.cholesky.T)
+    name = os.path.basename(__file__)
+    name = name.replace(".py", "")
+    plt.savefig(f"./from_results_to_paper/{name}.pdf")
 
 
-def model_latent(ts, *, impl, num) -> fpx.SSMCond:
-    ssm = fpx.ssm_wiener_integrated_interpolation(ts, impl=impl, num=num)
-    return ssm.dynamics.latent
+def plot_pdf(ax, xs, rv, *, i, label, color, impl):
+    @jax.vmap
+    def pdf(x):
+        m, c = impl.rv_to_mvnorm(rv)
+        return jax.scipy.stats.norm.pdf(x, m[i], c[i, i])
+
+    ax.plot(xs, pdf(xs), label=label, color=color)
+    ax.fill_between(xs, 0, pdf(xs), color=color, alpha=0.15)
 
 
 def em_update_init(*, old, new, impl):
