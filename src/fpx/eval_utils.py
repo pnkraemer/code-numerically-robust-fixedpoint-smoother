@@ -8,11 +8,10 @@ import pandas as pd
 from fpx import eval_utils
 
 
-def filename_results(file: str, /, *, replace: str):
-    """Create a filename: results/<matching-directory>/results.pkl."""
+def matching_directory(file: str, /, *, replace: str):
+    """Create a directory in results/ whose name matches the current filename."""
     dirname = str(file).replace(replace, "results")
-    dirname = dirname.replace(".py", "")
-    return f"{dirname}/results.pkl"
+    return dirname.replace(".py", "")
 
 
 def format_large_number_tex(float_number):
