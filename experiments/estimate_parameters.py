@@ -4,15 +4,14 @@ import jax.flatten_util
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import tqdm
-from fpx import fpx
+from fpx import eval_utils, fpx
 from tueplots import axes, fonts
-
-plt.rcParams.update(axes.lines())
-plt.rcParams.update(axes.tick_direction(y="in", x="in"))
-plt.rcParams.update(fonts.jmlr2001_tex())
 
 
 def main(seed=3):
+    plt.rcParams.update(eval_utils.plot_style())
+
+    # todo: plot different scales (which requires that we choose the scale here, not in the subfunction)
     jax.config.update("jax_enable_x64", True)
     num_iterations = 3
     key = jax.random.PRNGKey(seed)

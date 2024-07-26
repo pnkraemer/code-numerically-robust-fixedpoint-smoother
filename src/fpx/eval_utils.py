@@ -6,6 +6,7 @@ import jax
 import jax.flatten_util
 import jax.numpy as jnp
 import pandas as pd
+from tueplots import axes, fonts
 
 from fpx import eval_utils
 
@@ -30,3 +31,11 @@ def tree_random_like(key, tree, scale):
     flat, unflatten = jax.flatten_util.ravel_pytree(tree)
     flat_like = scale * jax.random.normal(key, shape=flat.shape, dtype=flat.dtype)
     return unflatten(flat_like)
+
+
+def plot_style():
+    return {
+        **axes.lines(),
+        **axes.tick_direction(x="in", y="in"),
+        **fonts.jmlr2001_tex(),
+    }
