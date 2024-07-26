@@ -4,21 +4,22 @@ import matplotlib.pyplot as plt
 import tqdm
 from fpx import fpx
 
+# todo: track marginal likelihoods of the data and compare for different means
+
 
 def main():
     # We use high-order Wiener processes
     # which require double precision
     jax.config.update("jax_enable_x64", True)
 
-    num_iterations = 10
-
+    num_iterations = 100
     # Select a BVP
     # vector_field, (t0, t1), (y0, y1), solution = bvp_matlab()
     vector_field, (t0, t1), (y0, y1), solution = bvp_linear_15th(scale=1e-3)
 
     # Build a state-space model
-    ts = jnp.linspace(t0, t1, endpoint=True, num=200)
-    num = 3
+    ts = jnp.linspace(t0, t1, endpoint=True, num=100)
+    num = 2
     impl = fpx.impl_cholesky_based()
     init = model_init(impl=impl, num=num)
     latent = model_latent(ts, impl=impl, num=num)
@@ -42,8 +43,8 @@ def main():
     # Construct the state-space model including
     # initial condition, constraints, and latent dynamics
     dynamics = fpx.SSMDynamics(latent, constraint)
-    ssm = fpx.SSM(init=init, dynamics=dynamics)
     data = jnp.zeros((len(ts[1:]), 1))
+    ssm = fpx.SSM(init=init, dynamics=dynamics)
 
     # Construct a fixed-point smoother
     fp_smoother = fpx.compute_fixedpoint(impl=impl)
@@ -51,13 +52,15 @@ def main():
     # Run a few fixed-point smoother iterations
     progressbar = tqdm.tqdm(range(num_iterations))
     delta = jnp.inf
+    like_new = jnp.inf
     for _ in progressbar:
-        progressbar.set_description(f"Delta: {delta:.1e}")
-        init_estimated, _info = fp_smoother(data=data, ssm=ssm)
+        progressbar.set_description(f"Delta: {delta:.3e}, Likelihood: {like_new:.3e}")
+        init_estimated, info = fp_smoother(data=data, ssm=ssm)
+        like_new = info["likelihood"]
         init, delta = em_update_init(old=init, new=init_estimated, impl=impl)
+        ssm = fpx.SSM(init=init, dynamics=dynamics)
         print(init.mean)
 
-    print("Final estimate:", init.mean)
     # Construct a fixed-interval smoother so we can plot the solution
     fi_smoother = fpx.compute_fixedinterval(impl=impl)
     (final, conds), _info = fi_smoother(data=data, ssm=ssm)
@@ -188,10 +191,12 @@ def em_update_init(*, old, new, impl):
 
     # Compute the difference between updates
     flat_old, _ = jax.flatten_util.ravel_pytree(impl.rv_to_mvnorm(old))
-    flat_new, _ = jax.flatten_util.ravel_pytree(impl.rv_to_mvnorm(new))
+    flat_new, _ = jax.flatten_util.ravel_pytree(impl.rv_to_mvnorm(updated))
     delta_abs = jnp.abs(flat_old - flat_new)
-    delta_rel = delta_abs / (1e-10 + jnp.abs(flat_old))
-    return updated, jnp.linalg.norm(delta_rel) / jnp.sqrt(flat_old.size)
+
+    nugget = jnp.sqrt(jnp.finfo(flat_old.dtype).eps)
+    # delta_rel = delta_abs / (nugget + jnp.abs(flat_old))
+    return updated, jnp.linalg.norm(delta_abs) / jnp.sqrt(flat_old.size)
 
 
 if __name__ == "__main__":
