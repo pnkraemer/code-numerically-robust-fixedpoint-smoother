@@ -13,10 +13,6 @@ from fpx import fpx
 def main():
     num_iterations = 20
 
-    # Select a BVP
-    # vector_field, (t0, t1), (y0, y1), solution = bvp_matlab()
-    vector_field, (t0, t1), (y0, y1), solution = bvp_linear_15th(scale=1e-3)
-
     # Choose an implementation
     impl = fpx.impl_cholesky_based()
 
@@ -28,6 +24,10 @@ def main():
 
 
 def simulate_bvp(impl, fp_smoother, num_steps):
+    # Select a BVP
+    # vector_field, (t0, t1), (y0, y1), solution = bvp_matlab()
+    vector_field, (t0, t1), (y0, y1), solution = bvp_linear_15th(scale=1e-3)
+
     # Build a state-space model
     ts = jnp.linspace(t0, t1, endpoint=True, num=num_steps)
     num = 2
@@ -57,7 +57,6 @@ def simulate_bvp(impl, fp_smoother, num_steps):
     ssm = fpx.SSM(init=init, dynamics=dynamics)
 
     # Run a few fixed-point smoother iterations
-    progressbar.set_description(f"Delta: {delta:.3e}, Likelihood: {like_new:.3e}")
     init_estimated, _info = fp_smoother(data=data, ssm=ssm)
     return init_estimated
 
