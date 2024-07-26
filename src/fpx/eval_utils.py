@@ -17,13 +17,17 @@ def matching_directory(file: str, /, *, replace: str):
     return dirname.replace(".py", "")
 
 
-def format_large_number_tex(float_number):
+def format_large_number_tex(float_number, num_digits=1):
     """Format a large number to tex-compatible scientific notation."""
+    if jnp.isnan(float_number):
+        return "NaN"
+    if jnp.isinf(float_number):
+        return r"$\infty$"
     # Taken from:
     # https://stackoverflow.com/questions/41157879/python-pandas-how-to-format-big-numbers-in-powers-of-ten-in-latex
     exponent = jnp.floor(jnp.log10(float_number))
     mantissa = float_number / 10**exponent
-    mantissa_format = str(mantissa)[0:3]  # todo: expose num_digits?
+    mantissa_format = str(mantissa)[0 : 2 + num_digits]  # todo: expose num_digits?
     return r"${0} \times 10^{{{1}}}$".format(mantissa_format, str(int(exponent)))
 
 

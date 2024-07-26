@@ -11,7 +11,6 @@ from tueplots import axes, fonts
 def main(seed=3):
     plt.rcParams.update(eval_utils.plot_style())
 
-    # todo: plot different scales (which requires that we choose the scale here, not in the subfunction)
     jax.config.update("jax_enable_x64", True)
     num_iterations = 3
     key = jax.random.PRNGKey(seed)

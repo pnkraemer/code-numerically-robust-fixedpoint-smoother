@@ -37,7 +37,7 @@ plt.savefig(f"{name}.pdf")
 df = pd.DataFrame(results)
 
 # Format large numbers
-df_formatted = df.map(lambda s: eval_utils.format_large_number_tex(4 * s))
+df_formatted = df.map(lambda s: eval_utils.format_large_number_tex(s, num_digits=1))
 
 # Print the dataframe in a latex-compatible way (to be copy/pasted)
 print()
