@@ -1,10 +1,11 @@
 """Numerically stable fixed-point smoothing in JAX."""
 
 import dataclasses
-import jax.numpy as jnp
+from typing import Any, Callable, Generic, NamedTuple, TypeVar
+
 import jax
 import jax.flatten_util
-from typing import Callable, Any, TypeVar, Generic, NamedTuple
+import jax.numpy as jnp
 import probdiffeq.ivpsolvers
 from probdiffeq.impl import impl as impl_probdiffeq
 

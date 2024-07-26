@@ -1,6 +1,7 @@
 import pickle
-import pandas as pd
+
 import jax.numpy as jnp
+import pandas as pd
 
 
 def format_tex(float_number):

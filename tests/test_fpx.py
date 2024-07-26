@@ -1,9 +1,8 @@
 """Test the Kalman filter implementation."""
 
-import pytest_cases
-import jax.numpy as jnp
 import jax
-
+import jax.numpy as jnp
+import pytest_cases
 from fpx import fpx
 
 
