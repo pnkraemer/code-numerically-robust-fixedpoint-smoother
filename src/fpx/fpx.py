@@ -345,10 +345,10 @@ def ssm_car_tracking_velocity(
     return SSM(init=x0, dynamics=jax.vmap(transition)(jnp.diff(ts)))
 
 
-def ssm_seventh_order_wiener_interpolation(ts, /, impl: Impl[T]) -> SSM[T]:
+def ssm_wiener_integrated_interpolation(ts, /, impl: Impl[T], num: int) -> SSM[T]:
     """Construct an interpolation problem with a seven-derivative Wiener process."""
     # Get all prior transitions from probdiffeq
-    prior = probdiffeq.ivpsolvers.prior_ibm_discrete(ts, num_derivatives=7)
+    prior = probdiffeq.ivpsolvers.prior_ibm_discrete(ts, num_derivatives=num)
     init = prior.init
     inintmean = init.mean.at[0].set(1.0)
     cov = init.cholesky @ init.cholesky.T
