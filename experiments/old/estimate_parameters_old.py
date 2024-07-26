@@ -4,60 +4,26 @@ import matplotlib.pyplot as plt
 import tqdm
 from fpx import fpx
 
+# todo: track marginal likelihoods of the data and compare for different means
+# todo: use car tracking for parameter estimation
+# todo: use autoregressive model for complexity estimates
+# todo: use BVP for stability
+
 
 def main():
-    jax.config.update("jax_enable_x64", True)
     num_iterations = 20
 
-    # Build a state-space model and sample data
-    key = jax.random.PRNGKey(1)
-    ts = jnp.linspace(0.0, 1.0, endpoint=True, num=10)
+    # Select a BVP
+    # vector_field, (t0, t1), (y0, y1), solution = bvp_matlab()
+    vector_field, (t0, t1), (y0, y1), solution = bvp_linear_15th(scale=1e-3)
+
+    # Build a state-space model
+    ts = jnp.linspace(t0, t1, endpoint=True, num=100)
+    num = 2
     impl = fpx.impl_cholesky_based()
-    ssm = fpx.ssm_car_tracking_velocity(ts, noise=0.01, dim=2, impl=impl)
-    init, dynamics = ssm.init, ssm.dynamics
-    key, subkey = jax.random.split(key, num=2)
-    mean = jax.random.normal(subkey, shape=init.mean.shape)
-    # key, subkey = jax.random.split(key, num=2)
-    # cholesky = jax.random.normal(subkey, shape=init.cholesky.shape)
-    cholesky = jnp.eye(len(init.cholesky)) * 1e-4
-    init = impl.rv_from_sqrtnorm(mean, cholesky)
-    ssm = fpx.SSM(init, dynamics)
-    sample = fpx.compute_stats_sample(impl=impl)
-    key, subkey = jax.random.split(key, num=2)
-    latent, data = sample(subkey, ssm)
-    mean_true, cholesky_true = ssm.init.mean, ssm.init.cholesky
+    init = model_init(impl=impl, num=num)
+    latent = model_latent(ts, impl=impl, num=num)
 
-    # Build a state-space model with the wrong initial condition
-    key, subkey = jax.random.split(key, num=2)
-    mean = jax.random.normal(subkey, shape=init.mean.shape)
-    key, subkey = jax.random.split(key, num=2)
-    cholesky = jax.random.normal(subkey, shape=init.cholesky.shape)
-    init = impl.rv_from_sqrtnorm(mean, cholesky)
-    ssm = fpx.SSM(init, dynamics)
-
-    # Run a fixed-point smoother on the wrong model
-    fp_smoother = fpx.compute_fixedpoint(impl=impl)
-
-    # Run a few fixed-point smoothe iterations
-    for _ in range(10):
-        init_estimated, info = fp_smoother(data=data, ssm=ssm)
-        init, delta = em_update_init(old=init, new=init_estimated, impl=impl)
-        ssm = fpx.SSM(init=init, dynamics=dynamics)
-        # print(delta)
-        print(info["likelihood"])
-        # print(jnp.abs(init.mean - mean_true))
-        # print(jnp.abs(init.cholesky - cholesky_true))
-        print()
-
-    print(init_estimated.mean)
-    print(mean_true)
-    print()
-    print(init_estimated.cholesky @ init_estimated.cholesky.T)
-    print(cholesky_true @ cholesky_true.T)
-    assert False
-    print(pdf)
-
-    assert False
     # Linearize
     x_and_dx = [1.0] * (num + 1)
     x_flat, unflatten = jax.flatten_util.ravel_pytree(x_and_dx)
@@ -84,9 +50,9 @@ def main():
     fp_smoother = fpx.compute_fixedpoint(impl=impl)
 
     # Run a few fixed-point smoother iterations
+    progressbar = tqdm.tqdm(range(num_iterations))
     delta = jnp.inf
     like_new = jnp.inf
-    progressbar = tqdm.tqdm(range(num_iterations))
     for _ in progressbar:
         progressbar.set_description(f"Delta: {delta:.3e}, Likelihood: {like_new:.3e}")
         init_estimated, info = fp_smoother(data=data, ssm=ssm)

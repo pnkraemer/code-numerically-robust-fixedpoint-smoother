@@ -18,9 +18,10 @@ which installs the source code plus all dependencies.
 
 ## Experiments
 
-- [ ] Square-root fixed-point smoother versus a state-augmented square-root Kalman filter
-- [ ] Square-root fixed-point smoother versus non-square-root fixed-point smoother
-- [ ] Parameter-estimation in boundary value problems via probabilistic numerics
+- [ ] Wall-time and memory on an autoregressive SSM
+- [ ] Numerical stability for solving a BVP
+- [ ] Parameter estimation: Estimate the initial location of a car
+
 
 ## Using the code
 
