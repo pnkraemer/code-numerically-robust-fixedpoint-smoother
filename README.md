@@ -20,7 +20,7 @@ which installs the source code plus all dependencies.
 
 - [ ] Wall-time and memory on an autoregressive SSM
 - [ ] Numerical stability for solving a BVP
-- [ ] Parameter estimation: Estimate the initial location of a car
+- [x] Parameter estimation: Estimate the initial location of a moving object (eg, a car)
 
 
 ## Using the code

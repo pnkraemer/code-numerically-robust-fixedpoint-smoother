@@ -5,13 +5,14 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import tqdm
 from fpx import fpx
-from tueplots import axes
+from tueplots import axes, fonts
 
 plt.rcParams.update(axes.lines())
 plt.rcParams.update(axes.tick_direction(y="in", x="in"))
+plt.rcParams.update(fonts.jmlr2001_tex())
 
 
-def main(seed=1):
+def main(seed=3):
     jax.config.update("jax_enable_x64", True)
     num_iterations = 3
     key = jax.random.PRNGKey(seed)
@@ -21,9 +22,10 @@ def main(seed=1):
     ts = jnp.linspace(0.0, 1.0, endpoint=True, num=10)
     ssm = fpx.ssm_car_tracking_velocity(ts, noise=0.1, dim=2, impl=impl)
     init, dynamics = ssm.init, ssm.dynamics
-    key, subkey1, subkey2 = jax.random.split(key, num=3)
-    mean = jax.random.normal(subkey1, shape=init.mean.shape)
-    cholesky = jax.random.normal(subkey2, shape=init.cholesky.shape)
+    key, subkey = jax.random.split(key, num=2)
+    mean = jax.random.normal(subkey, shape=init.mean.shape)
+    key, subkey = jax.random.split(key, num=2)
+    cholesky = jax.random.normal(subkey, shape=init.cholesky.shape)
     init = impl.rv_from_sqrtnorm(mean, cholesky)
     ssm = fpx.SSM(init, dynamics)
     ssm_true = ssm  # save the ssm as the correct one
@@ -38,6 +40,7 @@ def main(seed=1):
 
     # Run the fixed-point smoother in the right model
     init_estimated_true, info = fp_smoother(data=data, ssm=ssm_true)
+    print(init_estimated_true)
 
     # Build a state-space model with the wrong initial condition (wrong mean)
     key, subkey = jax.random.split(key, num=2)
@@ -78,7 +81,7 @@ def main(seed=1):
         axes_i[0].set_xlabel("Realisation")
 
         # Plot the second coordinate
-        xs = jnp.linspace(data[0, 1] - 1 / 6, data[0, 1] + 1 / 3, num=100)
+        xs = jnp.linspace(data[0, 1] - 1 / 3, data[0, 1] + 1 / 6, num=100)
         x0 = init_estimated  # alias to avoid linebreak in the next line
         plot_pdf(axes_i[1], xs, x0, i=1, impl=impl, color="C0", label="Iterate")
         t0 = init_estimated_true  # alias to avoid linebreak in the next line
@@ -91,6 +94,7 @@ def main(seed=1):
     name = os.path.basename(__file__)
     name = name.replace(".py", "")
     plt.savefig(f"./from_results_to_paper/{name}.pdf")
+    plt.show()
 
 
 def plot_pdf(ax, xs, rv, *, i, label, color, impl):
