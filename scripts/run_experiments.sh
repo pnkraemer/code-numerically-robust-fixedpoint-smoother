@@ -1,0 +1,1 @@
+time python experiments/measure_wall_time.py
