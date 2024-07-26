@@ -10,7 +10,7 @@ def main():
     y1 = jnp.sin(1.0)
 
     impl = fpx.impl_cholesky_based()
-    ts = jnp.linspace(t0, t1, endpoint=True, num=10)
+    ts = jnp.linspace(t0, t1, endpoint=True, num=100)
 
     init, prior = prior_transitions(ts, impl=impl)
     constraint = information_operator(ts[1:], impl=impl)
@@ -26,6 +26,16 @@ def main():
 
     # Final SSM:
     ssm = fpx.SSM(init=init_new, dynamics=fpx.SSMDynamics(prior, constraint))
+
+    # Run an RTS smoother and plot the solution
+    rts = fpx.compute_fixedinterval(impl)
+    data = jnp.zeros((len(ts[1:]), 1))
+    posterior, _ = rts(data, ssm)
+    marginalize = fpx.compute_stats_marginalize(impl=impl, reverse=True)
+    marginals = marginalize(*posterior)
+
+    print(jax.tree.map(jnp.shape, posterior))
+    print(jax.tree.map(jnp.shape, marginals))
 
 
 def information_operator(ts, *, impl) -> fpx.SSMCond:

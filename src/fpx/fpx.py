@@ -460,7 +460,9 @@ def compute_stats_marginalize(impl: Impl[T], reverse: bool) -> Callable:
             return marg, marg
 
         _, all_ = jax.lax.scan(scan_fun, xs=cond, init=init, reverse=reverse)
-        return all_
+        if reverse:
+            return jax.tree.map(lambda a, b: jnp.concatenate([a, b[None]]), all_, init)
+        return jax.tree.map(lambda a, b: jnp.concatenate([a[None], b]), init, all_)
 
     return marginalize
 
