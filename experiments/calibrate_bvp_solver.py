@@ -1,6 +1,7 @@
 import jax.flatten_util
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+import tqdm
 from fpx import fpx
 
 
@@ -11,7 +12,7 @@ def main():
     y1 = jnp.sin(1.0)
 
     impl = fpx.impl_cholesky_based()
-    ts = jnp.linspace(t0, t1, endpoint=True, num=100)
+    ts = jnp.linspace(t0, t1, endpoint=True, num=1000)
 
     init, prior = prior_transitions(ts, impl=impl)
     constraint = information_operator(ts[1:], impl=impl)
@@ -25,17 +26,23 @@ def main():
     _, cond_rev = impl.bayes_update(init, cond)
     init_new = impl.conditional_parametrize(jnp.atleast_1d(y0), cond_rev)
 
-    # Final SSM:
-    ssm = fpx.SSM(init=init_new, dynamics=fpx.SSMDynamics(prior, constraint))
-    # Run an RTS smoother and plot the solution
-    rts = fpx.compute_fixedinterval(impl)
-    data = jnp.zeros((len(ts[1:]), 1))
+    for _ in tqdm.tqdm(range(10)):
+        # Final SSM:
+        ssm = fpx.SSM(init=init_new, dynamics=fpx.SSMDynamics(prior, constraint))
+        # Run an RTS smoother and plot the solution
+        rts = fpx.compute_fixedinterval(impl)
+        data = jnp.zeros((len(ts[1:]), 1))
 
-    posterior, _ = rts(data, ssm)
+        posterior, aux = rts(data, ssm)
 
-    marginalize = fpx.compute_stats_marginalize(impl=impl, reverse=True)
-    marginals = marginalize(*posterior)
+        marginalize = fpx.compute_stats_marginalize(impl=impl, reverse=True)
+        marginals = marginalize(*posterior)
 
+        mean_new = marginals.mean[0, :]
+        init_new = impl.rv_from_sqrtnorm(mean_new, init_new.cholesky)
+        print(init_new.mean)
+
+    # marginals = aux["filter_distributions"]
     plt.plot(ts, marginals.mean[:, 0])
     plt.show()
 
@@ -46,7 +53,7 @@ def information_operator(ts, *, impl) -> fpx.SSMCond:
         # https://www.mathworks.com/help/matlab/ref/bvp5c.html
         return ddx + 2 * dx / t + x / t**4
 
-    x_and_dx = [1.0, 1.0, 10.0]
+    x_and_dx = [1.0, 1.0, 1.0]
     x_flat, unflatten = jax.flatten_util.ravel_pytree(x_and_dx)
 
     def res_wrapped(t, xflat):
@@ -70,7 +77,7 @@ def replace_bcond_t1(y1, impl, cond: fpx.SSMCond) -> fpx.SSMCond:
     A = A.at[-1, ...].set(A0)
 
     # b0 = jnp.atleast_1d(y0)
-    b1 = jnp.atleast_1d(y1)
+    b1 = -jnp.atleast_1d(y1)
     # noise_mean = noise_mean.at[0, ...].set(b0)
     noise_mean = noise_mean.at[-1, ...].set(b1)
     noise = impl.rv_from_sqrtnorm(noise_mean, cond.noise.cholesky)
