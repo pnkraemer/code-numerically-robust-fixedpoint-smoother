@@ -8,7 +8,7 @@ But if you want to work with this repository, proceed as follows.
 ## Installation
 
 We use Python 3.10 for all experiments.
-Older versions might also work.
+Other versions might also work.
 
 First, ensure that JAX is installed.
 Then, run

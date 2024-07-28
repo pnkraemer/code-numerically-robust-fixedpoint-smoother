@@ -28,7 +28,7 @@ def test_estimators_accept_callbacks(compute_fun):
     # Set up a test problem
     impl = fpx.impl_covariance_based()
     ts = jnp.linspace(0, 1)
-    ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl)
+    ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl, dim=2)
 
     # Create some data
     latent, data = _sample(ssm=ssm, impl=impl)
@@ -53,7 +53,7 @@ def test_estimators_accept_callbacks(compute_fun):
 def test_filter_estimates_trajectory_accurately(impl):
     # Set up a test problem
     ts = jnp.linspace(0, 1)
-    ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl)
+    ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl, dim=2)
 
     # Create some data
     latent, data = _sample(ssm=ssm, impl=impl)
@@ -73,7 +73,7 @@ def test_filter_estimates_trajectory_accurately(impl):
 def test_smoother_more_accurate_than_filter(impl):
     # Set up a test problem
     ts = jnp.linspace(0, 1, num=100)
-    ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-1, diffusion=1.0, impl=impl)
+    ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-1, diffusion=1.0, impl=impl, dim=2)
 
     # Create some data
     latent, data = _sample(ssm=ssm, impl=impl)
@@ -102,24 +102,24 @@ def test_smoother_more_accurate_than_filter(impl):
     # The smoother-solution does not include the terminal value
     # The filter-solution does not include the initial value
     # The data vectors match the filter solution
-    m_f = aux["filter_distributions"].mean[:-1]
-    y = latent[1:-1]
-    m_s = marginals.mean[1:]
+    m_f = aux["filter_distributions"].mean
+    y = latent
+    m_s = marginals.mean
 
     # Assert the filter is better than the noise
     # Use '0.9' to increase the significance
-    assert rmse(m_f[:, :2], y[:, :2]) < 0.9 * rmse(data[:-1], y[:, :2])
+    assert rmse(m_f[:, :2], y[1:, :2]) < 0.9 * rmse(data, y[1:, :2])
 
     # Assert that the smoother is better than the filter
     # Use '0.9' to increase the significance
-    assert rmse(m_s, y) < 0.9 * rmse(m_f, y)
+    assert rmse(m_s, y) < 0.9 * rmse(m_f, y[1:])
 
 
 @pytest_cases.parametrize_with_cases("impl", cases=".")
 def test_state_augmented_filter_matches_rts_smoother_at_initial_state(impl):
     # Set up a test problem
     ts = jnp.linspace(0, 1, num=100)
-    ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl)
+    ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl, dim=2)
 
     # Create some data
     latent, data = _sample(ssm=ssm, impl=impl)
@@ -144,7 +144,7 @@ def test_state_augmented_filter_matches_rts_smoother_at_initial_state(impl):
 def test_fixedpoint_smoother_matches_state_augmented_filter(impl):
     # Set up a test problem
     ts = jnp.linspace(0, 1, num=100)
-    ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl)
+    ssm = fpx.ssm_car_tracking_velocity(ts, noise=1e-4, diffusion=1.0, impl=impl, dim=2)
 
     # Create some data
     latent, data = _sample(ssm=ssm, impl=impl)
@@ -169,7 +169,7 @@ def test_square_root_parametrisation_matches_conventional_parametrisation_for_fi
     impl_conv = fpx.impl_covariance_based()
     ts = jnp.linspace(0, 1, num=100)
     ssm_conv = fpx.ssm_car_tracking_velocity(
-        ts, noise=1e-4, diffusion=1.0, impl=impl_conv
+        ts, noise=1e-4, diffusion=1.0, impl=impl_conv, dim=2
     )
 
     # Sample using the conventional parametrisation
@@ -180,7 +180,7 @@ def test_square_root_parametrisation_matches_conventional_parametrisation_for_fi
     # Replicate with sqrt parametrisation
     impl_sqrt = fpx.impl_cholesky_based()
     ssm_sqrt = fpx.ssm_car_tracking_velocity(
-        ts, noise=1e-4, diffusion=1.0, impl=impl_sqrt
+        ts, noise=1e-4, diffusion=1.0, impl=impl_sqrt, dim=2
     )
 
     compute_conv = fpx.compute_filter(impl=impl_conv)
