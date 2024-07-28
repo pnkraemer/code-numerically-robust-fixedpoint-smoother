@@ -352,78 +352,83 @@ def ssm_regression_wiener_velocity(ts, /, impl: Impl[T], dim=1) -> Callable:
     return parametrize
 
 
-def ssm_wiener_integrated_interpolation(ts, /, impl: Impl[T], num: int) -> SSM[T]:
+def ssm_interpolation_wiener_integrated(ts, /, impl: Impl[T], num: int) -> Callable:
     """Construct an interpolation problem with a seven-derivative Wiener process."""
-    # Get all prior transitions from probdiffeq
-    prior = probdiffeq.ivpsolvers.prior_ibm_discrete(ts, num_derivatives=num)
-    init = prior.init
-    inintmean = init.mean.at[0].set(1.0)
-    cov = init.cholesky @ init.cholesky.T
-    cov = cov.at[0, 0].set(1e-12)
-    init = impl.rv_from_mvnorm(inintmean, cov)
-    A = prior.conditional.matmul
-    q = prior.conditional.noise.mean
-    Q = prior.conditional.noise.cholesky
-    noise = impl.rv_from_mvnorm(q, jax.vmap(lambda s: s @ s.T)(Q))
 
-    # Observations: point-observations of the zeroth state.
-    H = jnp.zeros((1, A.shape[1]))
-    H = H.at[0, 0].set(1.0)
-    r = jnp.zeros((1,))
-    R = jnp.eye(1)
-    H = jnp.stack([H] * len(ts[:-1]))
-    r = jnp.stack([r] * len(ts[:-1]))
-    R = jnp.stack([R] * len(ts[:-1]))
-    return SSM(
-        init=init,
-        dynamics=SSMDynamics(
-            latent=SSMCond(A, noise),
-            observation=SSMCond(H, jax.vmap(impl.rv_from_mvnorm)(r, R)),
-        ),
-    )
+    def parametrize() -> SSM[T]:
+        # Get all prior transitions from probdiffeq
+        prior = probdiffeq.ivpsolvers.prior_ibm_discrete(ts, num_derivatives=num)
+        init = prior.init
+        inintmean = init.mean.at[0].set(1.0)
+        cov = init.cholesky @ init.cholesky.T
+        cov = cov.at[0, 0].set(1e-12)
+        init = impl.rv_from_mvnorm(inintmean, cov)
+        A = prior.conditional.matmul
+        q = prior.conditional.noise.mean
+        Q = prior.conditional.noise.cholesky
+        noise = impl.rv_from_mvnorm(q, jax.vmap(lambda s: s @ s.T)(Q))
+
+        # Observations: point-observations of the zeroth state.
+        H = jnp.zeros((1, A.shape[1]))
+        H = H.at[0, 0].set(1.0)
+        r = jnp.zeros((1,))
+        R = jnp.eye(1)
+        H = jnp.stack([H] * len(ts[:-1]))
+        r = jnp.stack([r] * len(ts[:-1]))
+        R = jnp.stack([R] * len(ts[:-1]))
+        return SSM(
+            init=init,
+            dynamics=SSMDynamics(
+                latent=SSMCond(A, noise),
+                observation=SSMCond(H, jax.vmap(impl.rv_from_mvnorm)(r, R)),
+            ),
+        )
+
+    return parametrize
 
 
-def ssm_car_tracking_acceleration(
-    ts, /, impl: Impl[T], noise=1.0, diffusion=1.0, dim: int = 1
-) -> SSM[T]:
+def ssm_regression_wiener_acceleration(ts, /, impl: Impl[T], dim: int = 1) -> Callable:
     """Construct a Wiener-acceleration car-tracking model."""
 
-    def transition(dt) -> SSMDynamics:
-        eye_d = jnp.eye(dim)
-        one_d = jnp.ones((dim,))
+    def parametrize(noise, diffusion=1.0) -> SSM[T]:
+        def transition(dt) -> SSMDynamics:
+            eye_d = jnp.eye(dim)
+            one_d = jnp.ones((dim,))
 
-        A_1d = jnp.asarray([[1.0, dt, dt**2 / 2], [0, 1.0, dt], [0, 0, 1.0]])
-        q_1d = jnp.asarray([0.0, 0.0, 0.0])
-        Q_1d = diffusion**2 * jnp.asarray(
-            [
-                [dt**5 / 20, dt**4 / 8, dt**3 / 3],
-                [dt**4 / 8, dt**3 / 3, dt**2 / 2],
-                [dt**3 / 3, dt**2 / 2, dt],
-            ]
-        )
-        Q_1d += 1e-8 * jnp.eye(len(Q_1d))
+            A_1d = jnp.asarray([[1.0, dt, dt**2 / 2], [0, 1.0, dt], [0, 0, 1.0]])
+            q_1d = jnp.asarray([0.0, 0.0, 0.0])
+            Q_1d = diffusion**2 * jnp.asarray(
+                [
+                    [dt**5 / 20, dt**4 / 8, dt**3 / 3],
+                    [dt**4 / 8, dt**3 / 3, dt**2 / 2],
+                    [dt**3 / 3, dt**2 / 2, dt],
+                ]
+            )
+            Q_1d += 1e-8 * jnp.eye(len(Q_1d))
 
-        H_1d = jnp.asarray([[1.0, 0.0, 0.0]])
-        r_1d = jnp.asarray(0.0)
-        R_1d = noise**2 * jnp.asarray(1.0)
+            H_1d = jnp.asarray([[1.0, 0.0, 0.0]])
+            r_1d = jnp.asarray(0.0)
+            R_1d = noise**2 * jnp.asarray(1.0)
 
-        A = jnp.kron(A_1d, eye_d)
-        q = jnp.kron(q_1d, one_d)
-        Q = jnp.kron(Q_1d, eye_d)
+            A = jnp.kron(A_1d, eye_d)
+            q = jnp.kron(q_1d, one_d)
+            Q = jnp.kron(Q_1d, eye_d)
 
-        H = jnp.kron(H_1d, eye_d)
-        r = jnp.kron(r_1d, one_d)
-        R = jnp.kron(R_1d, eye_d)
+            H = jnp.kron(H_1d, eye_d)
+            r = jnp.kron(r_1d, one_d)
+            R = jnp.kron(R_1d, eye_d)
 
-        rv_q = impl.rv_from_mvnorm(q, Q)
-        rv_r = impl.rv_from_mvnorm(r, R)
-        return SSMDynamics(latent=SSMCond(A, rv_q), observation=SSMCond(H, rv_r))
+            rv_q = impl.rv_from_mvnorm(q, Q)
+            rv_r = impl.rv_from_mvnorm(r, R)
+            return SSMDynamics(latent=SSMCond(A, rv_q), observation=SSMCond(H, rv_r))
 
-    m0 = jnp.zeros((3 * dim,))
-    C0 = jnp.eye(3 * dim)
-    x0 = impl.rv_from_mvnorm(m0, C0)
-    dynamics = jax.vmap(transition)(jnp.diff(ts))
-    return SSM(init=x0, dynamics=dynamics)
+        m0 = jnp.zeros((3 * dim,))
+        C0 = jnp.eye(3 * dim)
+        x0 = impl.rv_from_mvnorm(m0, C0)
+        dynamics = jax.vmap(transition)(jnp.diff(ts))
+        return SSM(init=x0, dynamics=dynamics)
+
+    return parametrize
 
 
 def compute_stats_sample(impl: Impl[T]) -> Callable:
