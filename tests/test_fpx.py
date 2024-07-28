@@ -199,6 +199,26 @@ def test_square_root_parametrisation_matches_conventional_parametrisation_for_fi
         assert allclose(x1, x2)
 
 
+def test_ssms_match_for_matching_parameters_velocity():
+    impl = fpx.impl_cholesky_based()
+    ts = jnp.linspace(0.2, 0.5, num=7)
+    parametrize1 = fpx.ssm_regression_wiener_integrated(ts, impl=impl, num=1)
+    ssm1 = parametrize1(noise=0.1234, diffusion=4.1231)
+    parametrize2 = fpx.ssm_regression_wiener_velocity(ts, impl=impl)
+    ssm2 = parametrize2(noise=0.1234, diffusion=4.1231)
+    assert jax.tree.map(jnp.allclose, ssm1, ssm2)
+
+
+def test_ssms_match_for_matching_parameters_acceleration():
+    impl = fpx.impl_cholesky_based()
+    ts = jnp.linspace(0.2, 0.5, num=7)
+    parametrize1 = fpx.ssm_regression_wiener_integrated(ts, impl=impl, num=2)
+    ssm1 = parametrize1(noise=0.1234, diffusion=4.1231)
+    parametrize2 = fpx.ssm_regression_wiener_acceleration(ts, impl=impl)
+    ssm2 = parametrize2(noise=0.1234, diffusion=4.1231)
+    assert jax.tree.map(jnp.allclose, ssm1, ssm2)
+
+
 def allclose(a, b):
     atol = jnp.sqrt(jnp.finfo(a.dtype).eps)
     rtol = jnp.sqrt(jnp.finfo(a.dtype).eps)

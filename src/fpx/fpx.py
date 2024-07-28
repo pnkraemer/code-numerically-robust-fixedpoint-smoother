@@ -352,12 +352,14 @@ def ssm_regression_wiener_velocity(ts, /, impl: Impl[T], dim=1) -> Callable:
     return parametrize
 
 
-def ssm_interpolation_wiener_integrated(ts, /, impl: Impl[T], num: int) -> Callable:
+def ssm_regression_wiener_integrated(ts, /, impl: Impl[T], num: int) -> Callable:
     """Construct an interpolation problem with a seven-derivative Wiener process."""
 
-    def parametrize() -> SSM[T]:
+    def parametrize(noise, diffusion) -> SSM[T]:
         # Get all prior transitions from probdiffeq
-        prior = probdiffeq.ivpsolvers.prior_ibm_discrete(ts, num_derivatives=num)
+        prior = probdiffeq.ivpsolvers.prior_ibm_discrete(
+            ts, output_scale=diffusion, num_derivatives=num
+        )
         init = prior.init
         inintmean = init.mean.at[0].set(1.0)
         cov = init.cholesky @ init.cholesky.T
@@ -366,21 +368,21 @@ def ssm_interpolation_wiener_integrated(ts, /, impl: Impl[T], num: int) -> Calla
         A = prior.conditional.matmul
         q = prior.conditional.noise.mean
         Q = prior.conditional.noise.cholesky
-        noise = impl.rv_from_mvnorm(q, jax.vmap(lambda s: s @ s.T)(Q))
+        noise_q = impl.rv_from_mvnorm(q, jax.vmap(lambda s: s @ s.T)(Q))
 
         # Observations: point-observations of the zeroth state.
         H = jnp.zeros((1, A.shape[1]))
         H = H.at[0, 0].set(1.0)
         r = jnp.zeros((1,))
-        R = jnp.eye(1)
+        R = noise * jnp.eye(1)
         H = jnp.stack([H] * len(ts[:-1]))
         r = jnp.stack([r] * len(ts[:-1]))
         R = jnp.stack([R] * len(ts[:-1]))
         return SSM(
             init=init,
             dynamics=SSMDynamics(
-                latent=SSMCond(A, noise),
-                observation=SSMCond(H, jax.vmap(impl.rv_from_mvnorm)(r, R)),
+                latent=SSMCond(A, noise_q),
+                observation=SSMCond(H, jax.vmap(impl.rv_from_sqrtnorm)(r, R)),
             ),
         )
 
