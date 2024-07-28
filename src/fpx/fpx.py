@@ -316,7 +316,7 @@ jax.tree_util.register_pytree_node(
 )
 
 
-def ssm_car_tracking_velocity(
+def ssm_regression_wiener_velocity(
     ts, /, impl: Impl[T], noise=1.0, diffusion=1.0, dim=1
 ) -> SSM[T]:
     """Construct a Wiener-velocity car-tracking model."""
