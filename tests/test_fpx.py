@@ -14,16 +14,27 @@ def case_impl_cholesky_based():
     return fpx.impl_cholesky_based()
 
 
-@pytest_cases.parametrize(
-    "compute_fun",
-    [
-        fpx.compute_fixedpoint,
-        fpx.compute_fixedpoint_via_smoother,
-        fpx.compute_fixedpoint_via_filter,
-        fpx.compute_fixedinterval,
-        fpx.compute_filter,
-    ],
-)
+def case_compute_fixedpoint():
+    return fpx.compute_fixedpoint
+
+
+def case_compute_fixedpoint_via_smoother():
+    return fpx.compute_fixedpoint_via_smoother
+
+
+def case_compute_fixedpoint_via_filter():
+    return fpx.compute_fixedpoint_via_filter
+
+
+def case_compute_fixedinterval():
+    return fpx.compute_fixedinterval
+
+
+def case_compute_filter():
+    return fpx.compute_filter
+
+
+@pytest_cases.parametrize_with_cases("compute_fun", cases=".", prefix="case_compute_")
 def test_estimators_accept_callbacks(compute_fun):
     # Set up a test problem
     impl = fpx.impl_covariance_based()
@@ -50,7 +61,7 @@ def test_estimators_accept_callbacks(compute_fun):
     assert "size" in aux.keys()
 
 
-@pytest_cases.parametrize_with_cases("impl", cases=".")
+@pytest_cases.parametrize_with_cases("impl", cases=".", prefix="case_impl_")
 def test_filter_estimates_trajectory_accurately(impl):
     # Set up a test problem
     ts = jnp.linspace(0, 1)
@@ -71,7 +82,7 @@ def test_filter_estimates_trajectory_accurately(impl):
     assert rmse(mean[:2], latent[-1, :2]) < 1e-3
 
 
-@pytest_cases.parametrize_with_cases("impl", cases=".")
+@pytest_cases.parametrize_with_cases("impl", cases=".", prefix="case_impl_")
 def test_smoother_more_accurate_than_filter(impl):
     # Set up a test problem
     ts = jnp.linspace(0, 1, num=100)
@@ -118,7 +129,7 @@ def test_smoother_more_accurate_than_filter(impl):
     assert rmse(m_s, y) < 0.9 * rmse(m_f, y[1:])
 
 
-@pytest_cases.parametrize_with_cases("impl", cases=".")
+@pytest_cases.parametrize_with_cases("impl", cases=".", prefix="case_impl_")
 def test_state_augmented_filter_matches_rts_smoother_at_initial_state(impl):
     # Set up a test problem
     ts = jnp.linspace(0, 1, num=100)
@@ -144,7 +155,7 @@ def test_state_augmented_filter_matches_rts_smoother_at_initial_state(impl):
         assert allclose(x1, x2)
 
 
-@pytest_cases.parametrize_with_cases("impl", cases=".")
+@pytest_cases.parametrize_with_cases("impl", cases=".", prefix="case_impl_")
 def test_fixedpoint_smoother_matches_state_augmented_filter(impl):
     # Set up a test problem
     ts = jnp.linspace(0, 1, num=100)
@@ -199,8 +210,8 @@ def test_square_root_parametrisation_matches_conventional_parametrisation_for_fi
         assert allclose(x1, x2)
 
 
-def test_ssms_match_for_matching_parameters_velocity():
-    impl = fpx.impl_cholesky_based()
+@pytest_cases.parametrize_with_cases("impl", cases=".", prefix="case_impl_")
+def test_ssms_match_for_matching_parameters_velocity(impl):
     ts = jnp.linspace(0.2, 0.5, num=7)
     parametrize1 = fpx.ssm_regression_wiener_integrated(ts, impl=impl, num=1)
     ssm1 = parametrize1(noise=0.1234, diffusion=4.1231)
@@ -209,8 +220,8 @@ def test_ssms_match_for_matching_parameters_velocity():
     assert jax.tree.map(jnp.allclose, ssm1, ssm2)
 
 
-def test_ssms_match_for_matching_parameters_acceleration():
-    impl = fpx.impl_cholesky_based()
+@pytest_cases.parametrize_with_cases("impl", cases=".", prefix="case_impl_")
+def test_ssms_match_for_matching_parameters_acceleration(impl):
     ts = jnp.linspace(0.2, 0.5, num=7)
     parametrize1 = fpx.ssm_regression_wiener_integrated(ts, impl=impl, num=2)
     ssm1 = parametrize1(noise=0.1234, diffusion=4.1231)
