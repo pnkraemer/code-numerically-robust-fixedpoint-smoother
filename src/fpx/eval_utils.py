@@ -43,3 +43,13 @@ def plot_style():
         **axes.tick_direction(x="in", y="in"),
         **fonts.jmlr2001_tex(),
     }
+
+
+def allclose(a, b):
+    atol = jnp.sqrt(jnp.finfo(a.dtype).eps)
+    rtol = jnp.sqrt(jnp.finfo(a.dtype).eps)
+    return jnp.allclose(a, b, atol=atol, rtol=rtol)
+
+
+def rmse_absolute(a, b):
+    return jnp.linalg.norm(a - b) / jnp.sqrt(a.size)

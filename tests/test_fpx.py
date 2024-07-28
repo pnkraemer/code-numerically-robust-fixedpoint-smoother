@@ -3,7 +3,7 @@
 import jax
 import jax.numpy as jnp
 import pytest_cases
-from fpx import fpx
+from fpx import eval_utils, fpx
 
 
 def case_impl_covariance_based():
@@ -35,7 +35,7 @@ def case_compute_filter():
 
 
 @pytest_cases.parametrize_with_cases("compute_fun", cases=".", prefix="case_compute_")
-def test_estimators_accept_callbacks(compute_fun):
+def test_functionality_estimators_accept_callbacks(compute_fun):
     # Set up a test problem
     impl = fpx.impl_covariance_based()
     ts = jnp.linspace(0, 1)
@@ -62,7 +62,7 @@ def test_estimators_accept_callbacks(compute_fun):
 
 
 @pytest_cases.parametrize_with_cases("impl", cases=".", prefix="case_impl_")
-def test_filter_estimates_trajectory_accurately(impl):
+def test_accuracy_filter_estimates_trajectory(impl):
     # Set up a test problem
     ts = jnp.linspace(0, 1)
     ssm_parametrize = fpx.ssm_regression_wiener_velocity(ts, impl=impl, dim=2)
@@ -79,11 +79,11 @@ def test_filter_estimates_trajectory_accurately(impl):
 
     # Assert that the error's magnitude is of the same order
     # as the observation noise
-    assert rmse(mean[:2], latent[-1, :2]) < 1e-3
+    assert eval_utils.rmse_absolute(mean[:2], latent[-1, :2]) < 1e-3
 
 
 @pytest_cases.parametrize_with_cases("impl", cases=".", prefix="case_impl_")
-def test_smoother_more_accurate_than_filter(impl):
+def test_accuracy_smoother_beats_filter(impl):
     # Set up a test problem
     ts = jnp.linspace(0, 1, num=100)
     ssm_parametrize = fpx.ssm_regression_wiener_velocity(ts, impl=impl, dim=2)
@@ -108,7 +108,7 @@ def test_smoother_more_accurate_than_filter(impl):
     # Assert that the final states of filter and smoother coincide
     t1 = impl.rv_to_mvnorm(terminal)
     t2 = impl.rv_to_mvnorm(terminal_filter)
-    assert jax.tree.all(jax.tree.map(jnp.allclose, t1, t2))
+    assert jax.tree.all(jax.tree.map(eval_utils.allclose, t1, t2))
 
     # Assert that the marginals make sense
     # Select the intermediate states of data, filter, and smoother
@@ -117,20 +117,20 @@ def test_smoother_more_accurate_than_filter(impl):
     # The filter-solution does not include the initial value
     # The data vectors match the filter solution
     m_f = aux["filter_distributions"].mean
-    y = latent
     m_s = marginals.mean
+    rmse_data = eval_utils.rmse_absolute(data, latent[1:, [0, 2]])
+    rmse_filter = eval_utils.rmse_absolute(m_f, latent[1:])
+    rmse_smoother = eval_utils.rmse_absolute(m_s, latent)
 
     # Assert the filter is better than the noise
-    # Use '0.9' to increase the significance
-    assert rmse(m_f[:, :2], y[1:, :2]) < 0.9 * rmse(data, y[1:, :2])
-
     # Assert that the smoother is better than the filter
     # Use '0.9' to increase the significance
-    assert rmse(m_s, y) < 0.9 * rmse(m_f, y[1:])
+    assert rmse_filter < 0.9 * rmse_data
+    assert rmse_smoother < 0.9 * rmse_filter
 
 
 @pytest_cases.parametrize_with_cases("impl", cases=".", prefix="case_impl_")
-def test_state_augmented_filter_matches_rts_smoother_at_initial_state(impl):
+def test_equivalence_state_augmented_filter_and_rts_smoother_at_initial_state(impl):
     # Set up a test problem
     ts = jnp.linspace(0, 1, num=100)
     ssm_parametrize = fpx.ssm_regression_wiener_velocity(ts, impl=impl, dim=2)
@@ -152,11 +152,11 @@ def test_state_augmented_filter_matches_rts_smoother_at_initial_state(impl):
     initial_rts = impl.rv_to_mvnorm(initial_rts)
     initial_fps = impl.rv_to_mvnorm(initial_fps)
     for x1, x2 in zip(jax.tree.leaves(initial_fps), jax.tree.leaves(initial_rts)):
-        assert allclose(x1, x2)
+        assert eval_utils.allclose(x1, x2)
 
 
 @pytest_cases.parametrize_with_cases("impl", cases=".", prefix="case_impl_")
-def test_fixedpoint_smoother_matches_state_augmented_filter(impl):
+def test_equivalence_fixedpoint_smoother_and_state_augmented_filter(impl):
     # Set up a test problem
     ts = jnp.linspace(0, 1, num=100)
     ssm_parametrize = fpx.ssm_regression_wiener_velocity(ts, impl=impl, dim=2)
@@ -178,10 +178,10 @@ def test_fixedpoint_smoother_matches_state_augmented_filter(impl):
     initial_rts = impl.rv_to_mvnorm(initial_rts)
     initial_fps = impl.rv_to_mvnorm(initial_fps)
     for x1, x2 in zip(jax.tree.leaves(initial_fps), jax.tree.leaves(initial_rts)):
-        assert allclose(x1, x2)
+        assert eval_utils.allclose(x1, x2)
 
 
-def test_square_root_parametrisation_matches_conventional_parametrisation_for_filter():
+def test_equivalence_filteroutput_cholesky_based_and_covariance_based():
     impl_conv = fpx.impl_covariance_based()
     ts = jnp.linspace(0, 1, num=100)
     ssm_parametrize = fpx.ssm_regression_wiener_velocity(ts, impl=impl_conv, dim=2)
@@ -207,33 +207,27 @@ def test_square_root_parametrisation_matches_conventional_parametrisation_for_fi
     rv_sqrt = impl_sqrt.rv_to_mvnorm(rv_sqrt)
 
     for x1, x2 in zip(jax.tree.leaves(rv_conv), jax.tree.leaves(rv_sqrt)):
-        assert allclose(x1, x2)
+        assert eval_utils.allclose(x1, x2)
 
 
 @pytest_cases.parametrize_with_cases("impl", cases=".", prefix="case_impl_")
-def test_ssms_match_for_matching_parameters_velocity(impl):
+def test_equivalence_ssm_parametrisations_match_velocity(impl):
     ts = jnp.linspace(0.2, 0.5, num=7)
     parametrize1 = fpx.ssm_regression_wiener_integrated(ts, impl=impl, num=1)
     ssm1 = parametrize1(noise=0.1234, diffusion=4.1231)
     parametrize2 = fpx.ssm_regression_wiener_velocity(ts, impl=impl)
     ssm2 = parametrize2(noise=0.1234, diffusion=4.1231)
-    assert jax.tree.map(jnp.allclose, ssm1, ssm2)
+    assert jax.tree.map(eval_utils.allclose, ssm1, ssm2)
 
 
 @pytest_cases.parametrize_with_cases("impl", cases=".", prefix="case_impl_")
-def test_ssms_match_for_matching_parameters_acceleration(impl):
+def test_equivalence_ssm_parametrisations_match_acceleration(impl):
     ts = jnp.linspace(0.2, 0.5, num=7)
     parametrize1 = fpx.ssm_regression_wiener_integrated(ts, impl=impl, num=2)
     ssm1 = parametrize1(noise=0.1234, diffusion=4.1231)
     parametrize2 = fpx.ssm_regression_wiener_acceleration(ts, impl=impl)
     ssm2 = parametrize2(noise=0.1234, diffusion=4.1231)
-    assert jax.tree.map(jnp.allclose, ssm1, ssm2)
-
-
-def allclose(a, b):
-    atol = jnp.sqrt(jnp.finfo(a.dtype).eps)
-    rtol = jnp.sqrt(jnp.finfo(a.dtype).eps)
-    return jnp.allclose(a, b, atol=atol, rtol=rtol)
+    assert jax.tree.map(eval_utils.allclose, ssm1, ssm2)
 
 
 def _sample(*, ssm, impl):
@@ -241,7 +235,3 @@ def _sample(*, ssm, impl):
     sample = fpx.compute_stats_sample(impl=impl)
     (latent, data) = sample(key, ssm)
     return latent, data
-
-
-def rmse(a, b):
-    return jnp.linalg.norm(a - b) / jnp.sqrt(a.size)
