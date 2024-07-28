@@ -18,7 +18,7 @@ def main(seed=3):
 
     # Build a state-space model
     ts = jnp.linspace(0.0, 1.0, endpoint=True, num=10)
-    ssm = fpx.ssm_car_tracking_velocity(ts, noise=0.1, dim=2, impl=impl)
+    ssm = fpx.ssm_regression_wiener_velocity(ts, noise=0.1, dim=2, impl=impl)
     init, dynamics = ssm.init, ssm.dynamics
     key, subkey = jax.random.split(key, num=2)
     mean = jax.random.normal(subkey, shape=init.mean.shape)
