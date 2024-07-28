@@ -1,4 +1,4 @@
-"""Numerically stable fixed-point smoothing in JAX."""
+"""Numerically robust fixed-point smoothing in JAX."""
 
 import dataclasses
 from typing import Any, Callable, Generic, NamedTuple, TypeVar

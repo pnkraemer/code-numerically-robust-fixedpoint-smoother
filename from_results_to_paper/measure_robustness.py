@@ -1,4 +1,4 @@
-"""Turn the stability-results into something to include in the paper."""
+"""Turn the robustness-results into something to include in the paper."""
 
 import os
 import pickle
