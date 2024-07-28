@@ -395,7 +395,7 @@ def ssm_car_tracking_acceleration(
         q_1d = jnp.asarray([0.0, 0.0, 0.0])
         Q_1d = diffusion**2 * jnp.asarray(
             [
-                [dt**5 / 20, dt**4 / 8, dt**3 / 6],
+                [dt**5 / 20, dt**4 / 8, dt**3 / 3],
                 [dt**4 / 8, dt**3 / 3, dt**2 / 2],
                 [dt**3 / 3, dt**2 / 2, dt],
             ]

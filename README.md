@@ -4,6 +4,10 @@
 This is experiment code.
 But if you want to work with this repository, proceed as follows.
 
+## Todos:
+- Reword `stability` to  `robustness`
+
+
 ## Installation
 
 We use Python 3.10 for all experiments.
@@ -18,8 +22,8 @@ which installs the source code plus all dependencies.
 
 ## Experiments
 
-- [ ] Wall-time and memory on an autoregressive SSM
-- [ ] Numerical stability for solving a BVP
+- [x] Wall-time and memory on an autoregressive SSM
+- [x] Numerical stability for solving a BVP
 - [x] Parameter estimation: Estimate the initial location of a moving object (eg, a car)
 
 
