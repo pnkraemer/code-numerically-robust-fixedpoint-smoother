@@ -316,39 +316,40 @@ jax.tree_util.register_pytree_node(
 )
 
 
-def ssm_regression_wiener_velocity(
-    ts, /, impl: Impl[T], noise=1.0, diffusion=1.0, dim=1
-) -> SSM[T]:
+def ssm_regression_wiener_velocity(ts, /, impl: Impl[T], dim=1) -> Callable:
     """Construct a Wiener-velocity car-tracking model."""
 
-    def transition(dt) -> SSMDynamics:
-        eye_d = jnp.eye(dim)
-        one_d = jnp.ones((dim,))
+    def parametrize(noise, diffusion=1.0) -> SSM[T]:
+        def transition(dt) -> SSMDynamics:
+            eye_d = jnp.eye(dim)
+            one_d = jnp.ones((dim,))
 
-        A_1d = jnp.asarray([[1.0, dt], [0, 1.0]])
-        q_1d = jnp.asarray([0.0, 0.0])
-        Q_1d = diffusion**2 * jnp.asarray([[dt**3 / 3, dt**2 / 2], [dt**2 / 2, dt]])
-        H_1d = jnp.asarray([[1.0, 0.0]])
-        r_1d = jnp.asarray(0.0)
-        R_1d = noise**2 * jnp.asarray(1.0)
+            A_1d = jnp.asarray([[1.0, dt], [0, 1.0]])
+            q_1d = jnp.asarray([0.0, 0.0])
+            Q_1d = diffusion**2 * jnp.asarray([[dt**3 / 3, dt**2 / 2], [dt**2 / 2, dt]])
+            H_1d = jnp.asarray([[1.0, 0.0]])
+            r_1d = jnp.asarray(0.0)
+            R_1d = noise**2 * jnp.asarray(1.0)
 
-        A = jnp.kron(A_1d, eye_d)
-        q = jnp.kron(q_1d, one_d)
-        Q = jnp.kron(Q_1d, eye_d)
+            A = jnp.kron(A_1d, eye_d)
+            q = jnp.kron(q_1d, one_d)
+            Q = jnp.kron(Q_1d, eye_d)
 
-        H = jnp.kron(H_1d, eye_d)
-        r = jnp.kron(r_1d, one_d)
-        R = jnp.kron(R_1d, eye_d)
+            H = jnp.kron(H_1d, eye_d)
+            r = jnp.kron(r_1d, one_d)
+            R = jnp.kron(R_1d, eye_d)
 
-        rv_q = impl.rv_from_mvnorm(q, Q)
-        rv_r = impl.rv_from_mvnorm(r, R)
-        return SSMDynamics(latent=SSMCond(A, rv_q), observation=SSMCond(H, rv_r))
+            rv_q = impl.rv_from_mvnorm(q, Q)
+            rv_r = impl.rv_from_mvnorm(r, R)
+            return SSMDynamics(latent=SSMCond(A, rv_q), observation=SSMCond(H, rv_r))
 
-    m0 = jnp.zeros((2 * dim,))
-    C0 = jnp.eye(2 * dim)
-    x0 = impl.rv_from_mvnorm(m0, C0)
+        m0 = jnp.zeros((2 * dim,))
+        C0 = jnp.eye(2 * dim)
+        x0 = impl.rv_from_mvnorm(m0, C0)
 
-    return SSM(init=x0, dynamics=jax.vmap(transition)(jnp.diff(ts)))
+        return SSM(init=x0, dynamics=jax.vmap(transition)(jnp.diff(ts)))
+
+    return parametrize
 
 
 def ssm_wiener_integrated_interpolation(ts, /, impl: Impl[T], num: int) -> SSM[T]:

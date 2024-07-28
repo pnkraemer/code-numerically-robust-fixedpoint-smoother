@@ -54,9 +54,8 @@ def test_estimators_accept_callbacks(compute_fun):
 def test_filter_estimates_trajectory_accurately(impl):
     # Set up a test problem
     ts = jnp.linspace(0, 1)
-    ssm = fpx.ssm_regression_wiener_velocity(
-        ts, noise=1e-4, diffusion=1.0, impl=impl, dim=2
-    )
+    ssm_parametrize = fpx.ssm_regression_wiener_velocity(ts, impl=impl, dim=2)
+    ssm = ssm_parametrize(noise=1e-4, diffusion=1.0)
 
     # Create some data
     latent, data = _sample(ssm=ssm, impl=impl)
@@ -76,9 +75,8 @@ def test_filter_estimates_trajectory_accurately(impl):
 def test_smoother_more_accurate_than_filter(impl):
     # Set up a test problem
     ts = jnp.linspace(0, 1, num=100)
-    ssm = fpx.ssm_regression_wiener_velocity(
-        ts, noise=1e-1, diffusion=1.0, impl=impl, dim=2
-    )
+    ssm_parametrize = fpx.ssm_regression_wiener_velocity(ts, impl=impl, dim=2)
+    ssm = ssm_parametrize(noise=1e-1, diffusion=1.0)
 
     # Create some data
     latent, data = _sample(ssm=ssm, impl=impl)
@@ -124,9 +122,8 @@ def test_smoother_more_accurate_than_filter(impl):
 def test_state_augmented_filter_matches_rts_smoother_at_initial_state(impl):
     # Set up a test problem
     ts = jnp.linspace(0, 1, num=100)
-    ssm = fpx.ssm_regression_wiener_velocity(
-        ts, noise=1e-4, diffusion=1.0, impl=impl, dim=2
-    )
+    ssm_parametrize = fpx.ssm_regression_wiener_velocity(ts, impl=impl, dim=2)
+    ssm = ssm_parametrize(noise=1e-4, diffusion=1.0)
 
     # Create some data
     latent, data = _sample(ssm=ssm, impl=impl)
@@ -151,9 +148,8 @@ def test_state_augmented_filter_matches_rts_smoother_at_initial_state(impl):
 def test_fixedpoint_smoother_matches_state_augmented_filter(impl):
     # Set up a test problem
     ts = jnp.linspace(0, 1, num=100)
-    ssm = fpx.ssm_regression_wiener_velocity(
-        ts, noise=1e-4, diffusion=1.0, impl=impl, dim=2
-    )
+    ssm_parametrize = fpx.ssm_regression_wiener_velocity(ts, impl=impl, dim=2)
+    ssm = ssm_parametrize(noise=1e-4, diffusion=1.0)
 
     # Create some data
     latent, data = _sample(ssm=ssm, impl=impl)
@@ -177,9 +173,8 @@ def test_fixedpoint_smoother_matches_state_augmented_filter(impl):
 def test_square_root_parametrisation_matches_conventional_parametrisation_for_filter():
     impl_conv = fpx.impl_covariance_based()
     ts = jnp.linspace(0, 1, num=100)
-    ssm_conv = fpx.ssm_regression_wiener_velocity(
-        ts, noise=1e-4, diffusion=1.0, impl=impl_conv, dim=2
-    )
+    ssm_parametrize = fpx.ssm_regression_wiener_velocity(ts, impl=impl_conv, dim=2)
+    ssm_conv = ssm_parametrize(noise=1e-4, diffusion=1.0)
 
     # Sample using the conventional parametrisation
     latent, data = _sample(ssm=ssm_conv, impl=impl_conv)
@@ -188,9 +183,8 @@ def test_square_root_parametrisation_matches_conventional_parametrisation_for_fi
 
     # Replicate with sqrt parametrisation
     impl_sqrt = fpx.impl_cholesky_based()
-    ssm_sqrt = fpx.ssm_regression_wiener_velocity(
-        ts, noise=1e-4, diffusion=1.0, impl=impl_sqrt, dim=2
-    )
+    ssm_parametrize = fpx.ssm_regression_wiener_velocity(ts, impl=impl_sqrt, dim=2)
+    ssm_sqrt = ssm_parametrize(noise=1e-4, diffusion=1.0)
 
     compute_conv = fpx.compute_filter(impl=impl_conv)
     compute_sqrt = fpx.compute_filter(impl=impl_sqrt)
