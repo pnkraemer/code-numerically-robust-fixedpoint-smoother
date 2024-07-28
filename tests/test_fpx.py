@@ -61,6 +61,27 @@ def test_functionality_estimators_accept_callbacks(compute_fun):
     assert "size" in aux.keys()
 
 
+@pytest_cases.parametrize_with_cases("compute_fun", cases=".", prefix="case_compute_")
+@pytest_cases.parametrize_with_cases("impl", cases=".", prefix="case_impl_")
+def test_functionality_estimators_compute_likelihood(impl, compute_fun):
+    # Set up a test problem
+    ts = jnp.linspace(0, 1)
+    ssm_parametrize = fpx.ssm_regression_wiener_velocity(ts, impl=impl, dim=2)
+    ssm = ssm_parametrize(noise=1e-4, diffusion=1.0)
+    latent, data = _sample(ssm=ssm, impl=impl)
+
+    # Compute a reference for the evidence
+    estimate = fpx.compute_filter(impl=impl)
+    _, aux = estimate(data, ssm)
+    reference = aux["evidence"]
+
+    # Assert that the estimator computes the evidence
+    estimate = compute_fun(impl=impl)
+    _, aux = estimate(data, ssm)
+    assert "evidence" in aux.keys()
+    assert eval_utils.allclose(aux["evidence"], reference)
+
+
 @pytest_cases.parametrize_with_cases("impl", cases=".", prefix="case_impl_")
 def test_accuracy_filter_estimates_trajectory(impl):
     # Set up a test problem

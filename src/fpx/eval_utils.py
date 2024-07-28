@@ -46,6 +46,8 @@ def plot_style():
 
 
 def allclose(a, b):
+    a = jnp.asarray(a)
+    b = jnp.asarray(b)
     atol = jnp.sqrt(jnp.finfo(a.dtype).eps)
     rtol = jnp.sqrt(jnp.finfo(a.dtype).eps)
     return jnp.allclose(a, b, atol=atol, rtol=rtol)
