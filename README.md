@@ -1,11 +1,8 @@
-# code-numerically-stable-fixed-point-smoother
+# code-numerically-robust-fixed-point-smoother
 
 **Warning:**
 This is experiment code.
 But if you want to work with this repository, proceed as follows.
-
-## Todos:
-- Reword `stability` to  `robustness`
 
 
 ## Installation
