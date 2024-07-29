@@ -228,7 +228,6 @@ def test_equivalence_filteroutput_cholesky_based_and_covariance_based():
     rv_conv = impl_conv.rv_to_mvnorm(rv_conv)
     rv_sqrt = impl_sqrt.rv_to_mvnorm(rv_sqrt)
 
-    # todo: compare all entries in aux!
     for x1, x2 in zip(jax.tree.leaves(rv_conv), jax.tree.leaves(rv_sqrt)):
         assert eval_utils.allclose(x1, x2)
 

@@ -589,7 +589,6 @@ def compute_fixedinterval(impl: Impl[T], cb: Callable | None = None) -> Callable
             updated = State(state_new, evidence_new)
             return updated, ((state_new, cond), info_)
 
-        # todo: rename 'Callback' to 'solver_stats'
         init = State(ssm.init, evidence=0.0)
 
         xs = (data, ssm.dynamics)
