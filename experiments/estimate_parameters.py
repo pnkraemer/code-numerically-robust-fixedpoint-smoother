@@ -18,7 +18,8 @@ def main(seed=3):
 
     # Build a state-space model
     ts = jnp.linspace(0.0, 1.0, endpoint=True, num=10)
-    ssm = fpx.ssm_regression_wiener_velocity(ts, noise=0.1, dim=2, impl=impl)
+    ssm_fun = fpx.ssm_regression_wiener_velocity(ts, impl=impl, dim=2)
+    ssm = ssm_fun(noise=0.1)
     init, dynamics = ssm.init, ssm.dynamics
     key, subkey = jax.random.split(key, num=2)
     mean = jax.random.normal(subkey, shape=init.mean.shape)
@@ -72,7 +73,7 @@ def main(seed=3):
         plot_pdf(axes_i[0], xs, x0, i=0, impl=impl, color="C0", label="Iterate")
         t0 = init_estimated_true  # alias to avoid linebreak in the next line
         plot_pdf(axes_i[0], xs, t0, i=0, impl=impl, color="C1", label="Target")
-        axes_i[0].set_title(f"Evidence: {info['likelihood']:.2f}", fontsize="medium")
+        axes_i[0].set_title(f"Evidence: {info['evidence']:.2f}", fontsize="medium")
         axes_i[0].axvline(data[0, 0], label="Noisy data", color="black")
         axes_i[0].legend(fontsize="x-small")
         axes_i[0].set_xlim((jnp.amin(xs), jnp.amax(xs)))
@@ -108,12 +109,6 @@ def plot_pdf(ax, xs, rv, *, i, label, color, impl):
 def em_update_init(*, old, new, impl):
     # Update the mean
     mean_new = new.mean
-
-    # Update the Cholesky factor
-    diff = new.mean - old.mean
-    stack = jnp.concatenate([new.cholesky.T, diff[None, ...]], axis=0)
-    cholesky_new = jnp.linalg.qr(stack, mode="r").T
-    # updated = impl.rv_from_sqrtnorm(old.mean, cholesky_new)
     updated = impl.rv_from_sqrtnorm(mean_new, old.cholesky)
 
     # Compute the difference between updates

@@ -151,7 +151,8 @@ def model_init(*, impl, num):
 
 
 def model_latent(ts, *, impl, num) -> fpx.SSMCond:
-    ssm = fpx.ssm_wiener_integrated_interpolation(ts, impl=impl, num=num)
+    ssm_fun = fpx.ssm_regression_wiener_integrated(ts, impl=impl, num=num)
+    ssm = ssm_fun(1.0, 1.0)
     return ssm.dynamics.latent
 
 

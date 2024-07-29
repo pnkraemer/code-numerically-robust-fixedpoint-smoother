@@ -48,7 +48,8 @@ def run_experiment(*, key, num_runs, num_dims_list, num_steps) -> dict:
 
         # Set up a state-space model
         ts = jnp.linspace(0, 1, num=num_steps)
-        ssm = fpx.ssm_regression_wiener_velocity(ts, impl=impl, dim=num_dims)
+        ssm_fun = fpx.ssm_regression_wiener_velocity(ts, impl=impl, dim=num_dims)
+        ssm = ssm_fun(noise=1.0, diffusion=1.0)  # values get overwritten
 
         # Randomly sample values of a state-space model. The values don't matter.
         key, subkey = jax.random.split(key, num=2)
