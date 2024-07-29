@@ -73,11 +73,11 @@ def main(seed=3):
         plot_pdf(axes_i[0], xs, x0, i=0, impl=impl, color="C0", label="Iterate")
         t0 = init_estimated_true  # alias to avoid linebreak in the next line
         plot_pdf(axes_i[0], xs, t0, i=0, impl=impl, color="C1", label="Target")
+        axes_i[0].set_title(f"$i={i}$", loc="left", fontsize="medium")
         axes_i[0].set_title(f"Evidence: {info['evidence']:.2f}", fontsize="medium")
         axes_i[0].axvline(data[0, 0], label="Noisy data", color="black")
         axes_i[0].legend(fontsize="x-small")
         axes_i[0].set_xlim((jnp.amin(xs), jnp.amax(xs)))
-        axes_i[0].set_xlabel("Realisation")
 
         # Plot the second coordinate
         xs = jnp.linspace(data[0, 1] - 1 / 3, data[0, 1] + 1 / 6, num=100)
