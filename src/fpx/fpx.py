@@ -167,6 +167,9 @@ def impl_cholesky_based() -> Impl[NormalChol]:
         cholesky_new = jnp.linalg.qr(cholesky.T[:, n:], mode="r").T
         return NormalChol(mean_new, cholesky_new)
 
+    def not_yet(*_a):
+        raise NotImplementedError
+
     return Impl(
         name="Cholesky-based",
         rv_from_mvnorm=rv_from_mvnorm,
@@ -175,6 +178,7 @@ def impl_cholesky_based() -> Impl[NormalChol]:
         rv_sample=rv_sample,
         rv_fixedpoint_select=rv_fixedpoint_select,
         rv_fixedpoint_augment=rv_fixedpoint_augment,
+        rv_logpdf=not_yet,
         dynamics_fixedpoint_augment=dynamics_fixedpoint_augment,
         conditional_parametrize=conditional_parametrize,
         conditional_merge=conditional_merge,
@@ -484,29 +488,46 @@ def compute_stats_marginalize(impl: Impl[T], reverse: bool) -> Callable:
 def compute_fixedpoint(impl: Impl[T], cb: Callable | None = None) -> Callable:
     """Estimate a solution of the fixed-point smoothing problem."""
 
+    class State(NamedTuple):
+        rv: T
+        cond: SSMCond[T]
+        info: dict
+        evidence: jax.Array
+
     def estimate(data: jax.Array, ssm: SSM[T]):
         def step_fun(state_k, inputs: tuple[jax.Array, SSMDynamics]) -> tuple:
             # Read
-            state_k, _info = state_k
             (y_k, model_k) = inputs
 
             # Predict
-            state_rv, state_backward = state_k
+            state_rv, state_backward = state_k.rv, state_k.cond
             state_kplus, backward = impl.bayes_update(state_rv, model_k.latent)
             backward = impl.conditional_merge(state_backward, backward)
 
             # Update
-            rv, gain = impl.bayes_update(state_kplus, model_k.observation)
+            marg, gain = impl.bayes_update(state_kplus, model_k.observation)
             state_new = impl.conditional_parametrize(y_k, gain)
+
+            # Evidence
+            ev_local = impl.rv_logpdf(y_k, marg)
+            evidence_new = state_k.evidence + ev_local
             info_ = cb(state_new, backward) if cb is not None else {}
-            return ((state_new, backward), info_), {}
+            state_updated = State(
+                rv=state_new, cond=backward, info=info_, evidence=evidence_new
+            )
+            return state_updated, {}
 
         cond = impl.conditional_from_identity(ssm.init)
-        init, xs = (ssm.init, cond), (data, ssm.dynamics)
+        info = cb(ssm.init, cond) if cb is not None else {}
+        init = State(ssm.init, cond, info=info, evidence=0.0)
 
-        info = cb(*init) if cb is not None else {}
-        ((rv, cond), aux), _ = jax.lax.scan(step_fun, xs=xs, init=(init, info))
-        return impl.marginalize(rv, cond), {"evidence": 0.0, **aux}
+        xs = (data, ssm.dynamics)
+        final, _ = jax.lax.scan(step_fun, xs=xs, init=init)
+        evidence = final.evidence / len(data)
+
+        marginal = impl.marginalize(final.rv, final.cond)
+        aux = {"evidence": evidence, **final.info}
+        return marginal, aux
 
     return estimate
 
@@ -525,36 +546,49 @@ def compute_fixedpoint_via_smoother(
         (terminal, conds), aux = compute_interval(data=data, ssm=ssm)
         marginals = marginalize(terminal, conds)
         initial_rts = jax.tree.map(lambda s: s[0, ...], marginals)
-        return initial_rts, {"evidence": 0.0, **aux}
+        return initial_rts, aux
 
     return estimate
+
+
+# todo: choose between writing "smoother", "fixed-interval", and "RTS" for good!
 
 
 def compute_fixedinterval(impl: Impl[T], cb: Callable | None = None) -> Callable:
     """Estimate a solution of the fixed-interval smoothing problem."""
 
+    class State(NamedTuple):
+        rv: T
+        evidence: jax.Array
+
     def estimate(data: jax.Array, ssm: SSM[T]):
-        def step_fun(
-            state_k: T, inputs: tuple[jax.Array, SSMDynamics]
-        ) -> tuple[T, Any]:
+        def step_fun(state_k: State, inputs: tuple[jax.Array, SSMDynamics]):
             # Read
             (y_k, model_k) = inputs
 
             # Predict
-            state_kplus, cond = impl.bayes_update(state_k, model_k.latent)
+            state_kplus, cond = impl.bayes_update(state_k.rv, model_k.latent)
 
             # Update
-            _rv, gain = impl.bayes_update(state_kplus, model_k.observation)
+            marg, gain = impl.bayes_update(state_kplus, model_k.observation)
             state_new = impl.conditional_parametrize(y_k, gain)
-            info = cb([state_new, cond]) if cb is not None else {}
-            return state_new, ((state_new, cond), info)
+            info_ = cb([state_new, cond]) if cb is not None else {}
 
-        x0 = ssm.init
-        solution, ((filterdists, conds), aux) = jax.lax.scan(
-            step_fun, xs=(data, ssm.dynamics), init=x0
-        )
-        return (solution, conds), {
-            "evidence": 0.0,
+            # Evidence
+            ev_local = impl.rv_logpdf(y_k, marg)
+            evidence_new = state_k.evidence + ev_local
+            updated = State(state_new, evidence_new)
+            return updated, ((state_new, cond), info_)
+
+        # todo: rename 'Callback' to 'solver_stats'
+        init = State(ssm.init, evidence=0.0)
+
+        xs = (data, ssm.dynamics)
+        solution, ((filterdists, conds), aux) = jax.lax.scan(step_fun, xs=xs, init=init)
+        evidence = solution.evidence / len(data)
+
+        return (solution.rv, conds), {
+            "evidence": evidence,
             "filter_distributions": filterdists,
             **aux,
         }

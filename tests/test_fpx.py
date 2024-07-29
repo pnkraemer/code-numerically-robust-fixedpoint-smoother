@@ -203,6 +203,7 @@ def test_equivalence_fixedpoint_smoother_and_state_augmented_filter(impl):
 
 
 def test_equivalence_filteroutput_cholesky_based_and_covariance_based():
+    # Build a state-space model
     impl_conv = fpx.impl_covariance_based()
     ts = jnp.linspace(0, 1, num=100)
     ssm_parametrize = fpx.ssm_regression_wiener_velocity(ts, impl=impl_conv, dim=2)
@@ -227,6 +228,7 @@ def test_equivalence_filteroutput_cholesky_based_and_covariance_based():
     rv_conv = impl_conv.rv_to_mvnorm(rv_conv)
     rv_sqrt = impl_sqrt.rv_to_mvnorm(rv_sqrt)
 
+    # todo: compare all entries in aux!
     for x1, x2 in zip(jax.tree.leaves(rv_conv), jax.tree.leaves(rv_sqrt)):
         assert eval_utils.allclose(x1, x2)
 
