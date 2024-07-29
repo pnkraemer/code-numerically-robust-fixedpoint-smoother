@@ -167,8 +167,17 @@ def impl_cholesky_based() -> Impl[NormalChol]:
         cholesky_new = jnp.linalg.qr(cholesky.T[:, n:], mode="r").T
         return NormalChol(mean_new, cholesky_new)
 
-    def not_yet(*_a):
-        raise NotImplementedError
+    def logpdf(u, /, rv):
+        # The cholesky factor is triangular, so we compute a cheap slogdet.
+        diagonal = jnp.diagonal(rv.cholesky, axis1=-1, axis2=-2)
+        slogdet = jnp.sum(jnp.log(jnp.abs(diagonal)))
+
+        dx = u - rv.mean
+        residual_white = jax.scipy.linalg.solve_triangular(rv.cholesky.T, dx, trans="T")
+        x1 = jnp.dot(residual_white, residual_white)
+        x2 = 2.0 * slogdet
+        x3 = u.size * jnp.log(jnp.pi * 2)
+        return -0.5 * (x1 + x2 + x3)
 
     return Impl(
         name="Cholesky-based",
@@ -178,7 +187,7 @@ def impl_cholesky_based() -> Impl[NormalChol]:
         rv_sample=rv_sample,
         rv_fixedpoint_select=rv_fixedpoint_select,
         rv_fixedpoint_augment=rv_fixedpoint_augment,
-        rv_logpdf=not_yet,
+        rv_logpdf=logpdf,
         dynamics_fixedpoint_augment=dynamics_fixedpoint_augment,
         conditional_parametrize=conditional_parametrize,
         conditional_merge=conditional_merge,

@@ -207,7 +207,7 @@ def test_equivalence_filteroutput_cholesky_based_and_covariance_based():
     impl_conv = fpx.impl_covariance_based()
     ts = jnp.linspace(0, 1, num=100)
     ssm_parametrize = fpx.ssm_regression_wiener_velocity(ts, impl=impl_conv, dim=2)
-    ssm_conv = ssm_parametrize(noise=1e-4, diffusion=1.0)
+    ssm_conv = ssm_parametrize(noise=1e-2, diffusion=1.0)
 
     # Sample using the conventional parametrisation
     latent, data = _sample(ssm=ssm_conv, impl=impl_conv)
@@ -217,13 +217,13 @@ def test_equivalence_filteroutput_cholesky_based_and_covariance_based():
     # Replicate with sqrt parametrisation
     impl_sqrt = fpx.impl_cholesky_based()
     ssm_parametrize = fpx.ssm_regression_wiener_velocity(ts, impl=impl_sqrt, dim=2)
-    ssm_sqrt = ssm_parametrize(noise=1e-4, diffusion=1.0)
+    ssm_sqrt = ssm_parametrize(noise=1e-2, diffusion=1.0)
 
     compute_conv = fpx.compute_filter(impl=impl_conv)
     compute_sqrt = fpx.compute_filter(impl=impl_sqrt)
 
-    rv_conv, _aux = compute_conv(data, ssm_conv)
-    rv_sqrt, _aux = compute_sqrt(data, ssm_sqrt)
+    rv_conv, aux_conv = compute_conv(data, ssm_conv)
+    rv_sqrt, aux_sqrt = compute_sqrt(data, ssm_sqrt)
 
     rv_conv = impl_conv.rv_to_mvnorm(rv_conv)
     rv_sqrt = impl_sqrt.rv_to_mvnorm(rv_sqrt)
@@ -231,6 +231,8 @@ def test_equivalence_filteroutput_cholesky_based_and_covariance_based():
     # todo: compare all entries in aux!
     for x1, x2 in zip(jax.tree.leaves(rv_conv), jax.tree.leaves(rv_sqrt)):
         assert eval_utils.allclose(x1, x2)
+
+    assert eval_utils.allclose(aux_conv["evidence"], aux_sqrt["evidence"])
 
 
 @pytest_cases.parametrize_with_cases("impl", cases=".", prefix="case_impl_")
