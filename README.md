@@ -19,10 +19,6 @@ which installs the source code plus all dependencies.
 
 ## Experiments
 
-- [x] Wall-time and memory on toy-SSM
-- [x] Numerical stability for solving a BVP
-- [x] Parameter estimation: Estimate the initial location of a moving object (eg, a car)
-
 To run the experiments, execute (for instance)
 ```commandline
 python experiments/estimate_parameters.py
@@ -34,9 +30,9 @@ make run-experiments
 To turn the results into the tables from the Paper, execute the scripts in `from_results_to_paper/*`.
 The scripts' names match the experiments' names, for example,
 ```commandline
-python from_results_to_paper/estimate_parameters.py
+python from_results_to_paper/measure_robustness.py
 ```
-
+The parameter estimation experiment plots result in the experiment script.
 
 ## Using the code
 
@@ -51,11 +47,3 @@ and access all code via `fpx.*` ("fpx" stands for "fixed-point smoothing in JAX"
 Consult the test file in `tests/test_fpx.py` for examples.
 
 You may also run `mkdocs serve` to get a list of all types and functions.
-
-## Working with the source
-
-After following the installation instructions above, the test-dependencies are installed.
-To run the tests, run
-```commandline
-make test
-```
