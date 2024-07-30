@@ -39,7 +39,7 @@ plt.plot(
 )
 # plt.title(r"Problem $\#$15", fontsize="medium")
 plt.xlabel("Input $t$")
-plt.ylabel("Output $x$")
+plt.ylabel("Output $u$")
 
 # Save the plot
 name = str(__file__)

@@ -1,5 +1,5 @@
 ---
-site_name: Numerically stable fixed-point smoothing in JAX
+site_name: Numerically robust fixed-point smoothing in JAX
 theme:
   name: material
 plugins:
