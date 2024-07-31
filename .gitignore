@@ -2,8 +2,8 @@
 src/**/_version.py
 
 
-src/fixedpointsmoother/__pycache__/
-src/fixedpointsmoother.egg-info/
+src/fpx/__pycache__/
+src/fpx.egg-info/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
