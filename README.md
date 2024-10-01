@@ -1,6 +1,26 @@
 # code-numerically-robust-fixed-point-smoother
 
-**Warning:**
+
+
+This repository contains the code for the preprint
+
+> Krämer, Nicholas. 
+> "Numerically Robust Fixed-Point Smoothing Without State Augmentation." 
+> arXiv preprint arXiv:2409.20004 (2024).
+
+Here is a bibtex entry:
+
+```bibtex
+@article{kramer2024numerically,
+  title={Numerically Robust Fixed-Point Smoothing Without State Augmentation},
+  author={Kr{\"a}mer, Nicholas},
+  journal={arXiv preprint arXiv:2409.20004},
+  year={2024}
+}
+```
+
+
+## Warning 
 This is experiment code.
 But if you want to work with this repository, proceed as follows.
 
