@@ -27,7 +27,7 @@ def format_large_number_tex(float_number, num_digits=1):
     # https://stackoverflow.com/questions/41157879/python-pandas-how-to-format-big-numbers-in-powers-of-ten-in-latex
     exponent = jnp.floor(jnp.log10(float_number))
     mantissa = float_number / 10**exponent
-    mantissa_format = str(mantissa)[0 : 2 + num_digits]  # todo: expose num_digits?
+    mantissa_format = str(mantissa)[0 : 2 + num_digits]
     return r"${0} \times 10^{{{1}}}$".format(mantissa_format, str(int(exponent)))
 
 

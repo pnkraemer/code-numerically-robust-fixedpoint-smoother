@@ -244,7 +244,6 @@ def impl_covariance_based() -> Impl[NormalCov]:
         S = cond.A @ rv.cov @ cond.A.T + cond.noise.cov
 
         # Update via Cholesky decomposition
-        # todo: should we use solve() instead?
         s_chol = jax.scipy.linalg.cho_factor(S)
         gain = jax.scipy.linalg.cho_solve(s_chol, cond.A @ rv.cov).T
 
@@ -558,9 +557,6 @@ def compute_fixedpoint_via_smoother(
         return initial_rts, aux
 
     return estimate
-
-
-# todo: choose between writing "smoother", "fixed-interval", and "RTS" for good!
 
 
 def compute_fixedinterval(impl: Impl[T], cb: Callable | None = None) -> Callable:
