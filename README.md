@@ -2,22 +2,25 @@
 
 
 
-This repository contains the code for the preprint
+This repository contains the code for the paper
 
 > Krämer, Nicholas. 
 > "Numerically Robust Fixed-Point Smoothing Without State Augmentation." 
-> arXiv preprint arXiv:2409.20004 (2024).
+> Transactions on Machine Learning Research (2025).
 
 Here is a bibtex entry:
 
 ```bibtex
-@article{kramer2024numerically,
+@article{
+  kramer2025numerically,
   title={Numerically Robust Fixed-Point Smoothing Without State Augmentation},
-  author={Kr{\"a}mer, Nicholas},
-  journal={arXiv preprint arXiv:2409.20004},
-  year={2024}
-}
-```
+  author={Nicholas Kr{\"a}mer},
+  journal={Transactions on Machine Learning Research},
+  issn={2835-8856},
+  year={2025},
+  url={https://openreview.net/forum?id=LVQ8BEL5n3},
+  note={}
+}```
 
 
 ## Warning 
